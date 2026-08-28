@@ -668,6 +668,39 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             </div>
           )}
         </div>
+
+        {/* PWA Install App Footer Bar */}
+        <div className="p-4 bg-teal-50/90 border-t border-teal-100 flex items-center justify-between gap-3 flex-shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-teal-800 text-white flex items-center justify-center font-bold text-xs shadow-2xs">
+              <Sparkles className="w-4 h-4 text-teal-200" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-teal-950">Aplikasi PWA Lingkar</div>
+              <div className="text-[10px] text-teal-700">Pasang aplikasi ke perangkat untuk akses kilat & push notifikasi</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const promptEvent = (window as any).deferredPrompt;
+              if (promptEvent) {
+                promptEvent.prompt();
+                promptEvent.userChoice.then((choiceResult: any) => {
+                  if (choiceResult.outcome === 'accepted') {
+                    console.log('User accepted the install prompt');
+                  }
+                  (window as any).deferredPrompt = null;
+                });
+              } else {
+                alert('Aplikasi Lingkar sudah terpasang atau browser Anda telah memuatnya. Anda dapat memilih "Add to Home Screen" atau "Install App" pada menu titik tiga browser Anda.');
+              }
+            }}
+            className="px-3.5 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold shadow-xs transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+          >
+            Install Aplikasi
+          </button>
+        </div>
       </div>
     </div>
   );

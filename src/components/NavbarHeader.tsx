@@ -284,37 +284,8 @@ export const NavbarHeader: React.FC<NavbarHeaderProps> = ({
                   </span>
                 </button>
               )}
-
-              {/* User Account / Role Switcher Modal Button */}
-              <button
-                onClick={() => setIsAuthModalOpen(true)}
-                className="flex items-center gap-1 px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200/80 rounded-full text-[11px] font-semibold transition-all active:scale-95 shadow-2xs"
-                title="Kelola Akun & Ganti Role"
-              >
-                <img
-                  src={currentUser.avatar}
-                  alt={currentUser.name}
-                  referrerPolicy="no-referrer"
-                  className="w-4 h-4 rounded-full object-cover"
-                />
-                <span className="hidden sm:inline max-w-[80px] truncate">{currentUser.name.split(' ')[0]}</span>
-              </button>
             </>
           )}
-
-          {/* Sound Toggle */}
-          <button
-            id="sound-toggle-btn"
-            onClick={toggleSound}
-            aria-label="Toggle Sound"
-            className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center rounded-full bg-white border border-slate-200/80 text-slate-600 hover:bg-slate-100 transition-all active:scale-95 shadow-xs"
-          >
-            {soundEnabled ? (
-              <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-700" />
-            ) : (
-              <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-            )}
-          </button>
 
           {/* Search Toggle */}
           <button

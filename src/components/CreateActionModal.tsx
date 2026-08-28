@@ -459,34 +459,35 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
                 <span>Tipe & Frekuensi Target</span>
-                <span className="text-[11px] font-normal text-slate-500">Pilih siklus pengerjaan</span>
+                <span className="text-[11px] font-medium text-slate-400">Pilih siklus pengerjaan</span>
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2.5">
                 {[
-                  { id: 'once', label: 'Tugas Sekali', desc: 'Milestone Proyek', icon: Target, badgeColor: 'text-teal-700' },
-                  { id: 'daily', label: 'Rutin Harian 🔥', desc: 'Daily Habit & Streak', icon: Flame, badgeColor: 'text-orange-600' },
-                  { id: 'weekly', label: 'Rutin Mingguan', desc: 'Evaluasi Berkala', icon: Clock, badgeColor: 'text-indigo-600' },
+                  { id: 'once', label: 'Tugas Sekali', desc: 'Milestone Proyek' },
+                  { id: 'daily', label: 'Rutin Harian', desc: 'Daily Habit & Streak' },
+                  { id: 'weekly', label: 'Rutin Mingguan', desc: 'Evaluasi Berkala' },
                 ].map((freq) => {
-                  const Icon = freq.icon;
                   const active = taskFrequency === freq.id;
                   return (
                     <button
                       key={freq.id}
                       type="button"
                       onClick={() => setTaskFrequency(freq.id as TaskFrequency)}
-                      className={`p-2.5 rounded-2xl border text-left transition-all ${
+                      className={`p-3 rounded-2xl border text-left transition-all relative ${
                         active
-                          ? 'bg-teal-50 border-teal-600 shadow-2xs ring-1 ring-teal-600'
-                          : 'bg-white border-slate-200 hover:border-slate-300'
+                          ? 'bg-teal-900 text-white border-teal-900 shadow-sm'
+                          : 'bg-white text-slate-800 border-slate-200 hover:border-slate-300'
                       }`}
                     >
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <Icon className={`w-3.5 h-3.5 ${freq.badgeColor}`} />
-                        <span className={`text-xs font-bold ${active ? 'text-teal-900' : 'text-slate-800'}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`text-xs font-bold ${active ? 'text-white' : 'text-slate-900'}`}>
                           {freq.label}
                         </span>
+                        {active && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-teal-300"></span>
+                        )}
                       </div>
-                      <p className="text-[10px] text-slate-500 leading-tight">{freq.desc}</p>
+                      <p className={`text-[10px] leading-tight ${active ? 'text-teal-200' : 'text-slate-500'}`}>{freq.desc}</p>
                     </button>
                   );
                 })}

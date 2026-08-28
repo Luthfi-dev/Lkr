@@ -65,6 +65,16 @@ const MainContent: React.FC = () => {
 
   // Sync hash change for task modal
   React.useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      (window as any).deferredPrompt = e;
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
     const handleHash = () => {
       if (window.location.hash.startsWith('#task/')) {
         const taskId = window.location.hash.replace('#task/', '');
@@ -75,7 +85,10 @@ const MainContent: React.FC = () => {
       }
     };
     window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
+    return () => {
+      window.removeEventListener('hashchange', handleHash);
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
   }, [tasks, selectedTask]);
 
   const handleOpenCreateWith = (

@@ -12,6 +12,9 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+const APP_STATUS = process.env.APP_STATUS || 'development';
+console.log(`[APP] Running app in status: [${APP_STATUS}]`);
+
 // In-memory application configuration state for Superadmin
 let appConfig = {
   appName: 'Lingkar',
@@ -487,70 +490,70 @@ async function ensureMySQLTables(conn: mysql.PoolConnection | mysql.Pool): Promi
     await conn.query(`ALTER TABLE tasks ADD COLUMN recurrence_time VARCHAR(50) DEFAULT NULL`);
   } catch {}
 
-  // Seed default users ONLY IF users table is completely empty (never overwrite existing database data)
-  try {
-    const [userRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM users');
-    const userCount = Number(userRows?.[0]?.cnt || 0);
-    if (userCount === 0) {
-      console.log('Seeding initial default admin and member accounts...');
-      for (const u of dummyUsers) {
-        await conn.query(`
-          INSERT INTO users (id, email, username, password_hash, name, role, avatar, title, points, level, streak_days, badges_count, is_active, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        `, [
-          u.id,
-          u.email,
-          u.username,
-          u.passwordHash,
-          u.name,
-          u.role,
-          u.avatar,
-          u.title,
-          u.points,
-          u.level,
-          u.streakDays,
-          u.badgesCount,
-          u.isActive ? 1 : 0,
-        ]);
+  // Seed default data ONLY in development/testing mode (disabled when APP_STATUS=production)
+  if (APP_STATUS !== 'production') {
+    try {
+      const [userRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM users');
+      const userCount = Number(userRows?.[0]?.cnt || 0);
+      if (userCount === 0) {
+        console.log('Seeding initial default admin and member accounts...');
+        for (const u of dummyUsers) {
+          await conn.query(`
+            INSERT INTO users (id, email, username, password_hash, name, role, avatar, title, points, level, streak_days, badges_count, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          `, [
+            u.id,
+            u.email,
+            u.username,
+            u.passwordHash,
+            u.name,
+            u.role,
+            u.avatar,
+            u.title,
+            u.points,
+            u.level,
+            u.streakDays,
+            u.badgesCount,
+            u.isActive ? 1 : 0,
+          ]);
+        }
       }
+    } catch (err: any) {
+      console.warn('Skip user seeding check:', err.message);
     }
-  } catch (err: any) {
-    console.warn('Skip user seeding check:', err.message);
-  }
 
-  // Seed default circles ONLY IF circles table is completely empty
-  try {
-    const [circleRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM circles');
-    const circleCount = Number(circleRows?.[0]?.cnt || 0);
-    if (circleCount === 0) {
-      console.log('Seeding initial default circles...');
-      await conn.query(`
-        INSERT INTO circles (id, name, code, description, category, kas_balance, is_private)
-        VALUES 
-        ('circle_1', 'Lingkar Studi AI & Tech Ethics', 'AI-STUDY-88', 'Kelompok riset dan diskusi mingguan seputar AI terapan dan etika teknologi.', 'Kelompok Studi', 3450000, 0),
-        ('circle_2', 'Relawan Mengajar Pesisir', 'PESISIR-01', 'Gerakan akar rumput mendistribusikan buku dan mentoring belajar desa pesisir.', 'Organisasi Akar Rumput', 5820000, 0);
-      `);
+    try {
+      const [circleRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM circles');
+      const circleCount = Number(circleRows?.[0]?.cnt || 0);
+      if (circleCount === 0) {
+        console.log('Seeding initial default circles...');
+        await conn.query(`
+          INSERT INTO circles (id, name, code, description, category, kas_balance, is_private)
+          VALUES 
+          ('circle_1', 'Lingkar Studi AI & Tech Ethics', 'AI-STUDY-88', 'Kelompok riset dan diskusi mingguan seputar AI terapan dan etika teknologi.', 'Kelompok Studi', 3450000, 0),
+          ('circle_2', 'Relawan Mengajar Pesisir', 'PESISIR-01', 'Gerakan akar rumput mendistribusikan buku dan mentoring belajar desa pesisir.', 'Organisasi Akar Rumput', 5820000, 0);
+        `);
+      }
+    } catch (err: any) {
+      console.warn('Skip circle seeding check:', err.message);
     }
-  } catch (err: any) {
-    console.warn('Skip circle seeding check:', err.message);
-  }
 
-  // Seed default circle members ONLY IF circle_members table is empty
-  try {
-    const [cmRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM circle_members');
-    const cmCount = Number(cmRows?.[0]?.cnt || 0);
-    if (cmCount === 0) {
-      console.log('Seeding initial circle members...');
-      await conn.query(`
-        INSERT INTO circle_members (id, circle_id, user_id, role, contribution_points)
-        VALUES
-        ('cm_1', 'circle_1', 'usr_superadmin', 'Ketua', 9999),
-        ('cm_2', 'circle_1', 'usr_1', 'Anggota', 1280),
-        ('cm_3', 'circle_2', 'usr_admin', 'Ketua', 4520);
-      `);
+    try {
+      const [cmRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM circle_members');
+      const cmCount = Number(cmRows?.[0]?.cnt || 0);
+      if (cmCount === 0) {
+        console.log('Seeding initial circle members...');
+        await conn.query(`
+          INSERT INTO circle_members (id, circle_id, user_id, role, contribution_points)
+          VALUES
+          ('cm_1', 'circle_1', 'usr_superadmin', 'Ketua', 9999),
+          ('cm_2', 'circle_1', 'usr_1', 'Anggota', 1280),
+          ('cm_3', 'circle_2', 'usr_admin', 'Ketua', 4520);
+        `);
+      }
+    } catch (err: any) {
+      console.warn('Skip circle member seeding check:', err.message);
     }
-  } catch (err: any) {
-    console.warn('Skip circle member seeding check:', err.message);
   }
 
   // Load or initialize App Configuration in MySQL

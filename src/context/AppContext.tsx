@@ -768,6 +768,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       read: false,
     };
     setRawNotifications((prev) => [newItem, ...prev]);
+
+    // Trigger native browser/OS push notification
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'granted') {
+        try {
+          new Notification(newItem.title, {
+            body: newItem.message,
+            icon: '/favicon.ico',
+          });
+        } catch {}
+      } else if (Notification.permission === 'default') {
+        Notification.requestPermission().then((permission) => {
+          if (permission === 'granted') {
+            try {
+              new Notification(newItem.title, {
+                body: newItem.message,
+                icon: '/favicon.ico',
+              });
+            } catch {}
+          }
+        }).catch(() => {});
+      }
+    }
   };
 
   const markAllNotificationsRead = () => {
