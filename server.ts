@@ -2911,10 +2911,20 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Lingkar Server running on http://0.0.0.0:${PORT}`);
-    console.log(`📁 Uploads stored in: ${UPLOADS_DIR}`);
-  });
+  const portEnv = process.env.PORT;
+
+  if (portEnv && (portEnv.toString().startsWith('/') || portEnv.toString().includes(':'))) {
+    app.listen(portEnv as any, () => {
+      console.log(`🚀 Lingkar Server running on Unix Socket: ${portEnv}`);
+      console.log(`📁 Uploads stored in: ${UPLOADS_DIR}`);
+    });
+  } else {
+    const PORT = Number(portEnv) || 3000;
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 Lingkar Server running on http://0.0.0.0:${PORT}`);
+      console.log(`📁 Uploads stored in: ${UPLOADS_DIR}`);
+    });
+  }
 }
 
 /**

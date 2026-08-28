@@ -56,3 +56,12 @@ MYSQL_SSL="false"
 1. Kembali ke menu **Setup Node.js App** di cPanel.
 2. Klik tombol **Restart** pada aplikasi Anda.
 3. Buka URL aplikasi Anda di browser. Aplikasi siap digunakan secara penuh, cepat, dan *stand-alone*!
+
+---
+
+## Troubleshooting: Mengatasi Pesan "Upgrade Required"
+Jika saat mengakses link web di cPanel muncul tulisan **"Upgrade Required"**, hal tersebut disebabkan oleh:
+1. **Phusion Passenger belum di-restart** setelah perubahan file startup atau konfigurasi port. Cukup klik tombol **Restart** di panel **Setup Node.js App**.
+2. **Proses Build Belum Dijalankan**: Pastikan Anda sudah menjalankan `npm install` dan `npm run build` sehingga file `server.cjs` dan folder `dist/` sudah terbentuk di root direktori aplikasi cPanel Anda.
+3. **Konfigurasi Startup File**: Pastikan pada **Application startup file** di cPanel tertulis `server.cjs` (bukan `server.ts` atau `index.js`), karena Passenger membutuhkan file bundel CommonJS tersebut.
+
