@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Crown,
@@ -42,6 +42,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const resetForms = () => {
+    setIdentifier('');
+    setPassword('');
+    setRegName('');
+    setRegUsername('');
+    setRegEmail('');
+    setRegPassword('');
+    setShowPassword(false);
+    setErrorMsg('');
+    setSuccessMsg('');
+  };
+
+  // Clear all form inputs whenever modal opens or closes
+  useEffect(() => {
+    if (!isOpen) {
+      resetForms();
+    }
+  }, [isOpen]);
+
+  const handleClose = () => {
+    resetForms();
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -59,14 +83,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
       const result = await login(identifier, password);
       if (result.success) {
         setSuccessMsg('Autentikasi berhasil! Mengarahkan ke dashboard...');
+        // Clear all form fields immediately so no credentials remain in memory/UI
+        resetForms();
         setTimeout(() => {
           onClose();
-        }, 600);
+        }, 500);
       } else {
-        setErrorMsg(result.error || 'Autentikasi gagal. Periksa kembali email/username dan kata sandi Anda.');
+        setErrorMsg(result.error || 'Kata sandi atau email/username tidak sesuai. Silakan periksa kembali.');
+        setPassword('');
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Terjadi kesalahan sistem.');
+      setErrorMsg(err.message || 'Terjadi kesalahan sistem. Silakan periksa koneksi dan coba lagi.');
     } finally {
       setIsLoading(false);
     }
@@ -93,14 +120,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
       if (result.success) {
         setSuccessMsg('Pendaftaran akun berhasil! Mengarahkan ke aplikasi...');
+        // Clear all form fields immediately upon successful registration
+        resetForms();
         setTimeout(() => {
           onClose();
-        }, 600);
+        }, 500);
       } else {
-        setErrorMsg(result.error || 'Pendaftaran gagal.');
+        setErrorMsg(result.error || 'Pendaftaran gagal. Silakan periksa kembali data yang dimasukkan.');
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Gagal mendaftar.');
+      setErrorMsg(err.message || 'Gagal mendaftar. Silakan periksa kembali data Anda.');
     } finally {
       setIsLoading(false);
     }
@@ -124,8 +153,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               </div>
             </div>
             <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors"
+              onClick={handleClose}
+              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
             >
               ✕
             </button>
@@ -188,12 +217,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 type="button"
                 onClick={async () => {
                   await logout();
+                  resetForms();
                   setSuccessMsg('Berhasil keluar akun.');
                   setTimeout(() => {
-                    onClose();
+                    handleClose();
                   }, 600);
                 }}
-                className="px-2.5 py-1 rounded-xl bg-slate-200/80 hover:bg-rose-50 hover:text-rose-700 text-slate-700 text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
+                className="px-2.5 py-1 rounded-xl bg-slate-200/80 hover:bg-rose-50 hover:text-rose-700 text-slate-700 text-xs font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
                 title="Keluar Sesi"
               >
                 <LogOut className="w-3.5 h-3.5" />
@@ -207,11 +237,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             <button
               type="button"
               onClick={() => {
+                resetForms();
                 setAuthMode('login');
-                setErrorMsg('');
-                setSuccessMsg('');
               }}
-              className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 authMode === 'login'
                   ? 'bg-white text-slate-900 shadow-2xs'
                   : 'text-slate-500 hover:text-slate-800'
@@ -222,11 +251,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             <button
               type="button"
               onClick={() => {
+                resetForms();
                 setAuthMode('register');
-                setErrorMsg('');
-                setSuccessMsg('');
               }}
-              className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all ${
+              className={`flex-1 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 authMode === 'register'
                   ? 'bg-white text-slate-900 shadow-2xs'
                   : 'text-slate-500 hover:text-slate-800'
@@ -262,6 +290,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
+                    autoComplete="username"
                     placeholder="Masukkan email atau username Anda..."
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
@@ -278,6 +307,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                   <input
                     type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
                     placeholder="Masukkan kata sandi..."
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -286,7 +316,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -320,6 +350,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 </label>
                 <input
                   type="text"
+                  autoComplete="name"
                   placeholder="cth. Rian Ardiansyah"
                   value={regName}
                   onChange={(e) => setRegName(e.target.value)}
@@ -333,6 +364,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 </label>
                 <input
                   type="text"
+                  autoComplete="username"
                   placeholder="cth. rian_ardi"
                   value={regUsername}
                   onChange={(e) => setRegUsername(e.target.value)}
@@ -346,6 +378,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 </label>
                 <input
                   type="email"
+                  autoComplete="email"
                   placeholder="rian@lingkarkebaikan.org"
                   value={regEmail}
                   onChange={(e) => setRegEmail(e.target.value)}
@@ -359,6 +392,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   placeholder="Kata sandi baru (min. 6 karakter)..."
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}
