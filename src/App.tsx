@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { RefreshCw, Sparkles, X } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
 import { NavbarHeader } from './components/NavbarHeader';
 import { BottomNav } from './components/BottomNav';
@@ -63,10 +64,60 @@ const MainContent: React.FC = () => {
   >(null);
   const [createDefaultDate, setCreateDefaultDate] = useState<string | undefined>(undefined);
 
-  // Sync hash change for task modal
+  const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
+  const [showUpdateToast, setShowUpdateToast] = useState(false);
+
+  // Sync hash change and handle PWA Service Worker auto-update
   React.useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register('/sw.js').then((reg) => {
+        // 1. Check if there's already an updated worker waiting
+        if (reg.waiting) {
+          setWaitingWorker(reg.waiting);
+          setShowUpdateToast(true);
+        }
+
+        // 2. Listen for newly detected updates
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                // New update installed and ready to take over
+                setWaitingWorker(newWorker);
+                setShowUpdateToast(true);
+              }
+            });
+          }
+        });
+
+        // 3. Proactively check for updates when user returns to the tab or reconnects
+        const checkForUpdate = () => {
+          try {
+            reg.update().catch(() => {});
+          } catch {}
+        };
+
+        window.addEventListener('focus', checkForUpdate);
+        window.addEventListener('online', checkForUpdate);
+        // Periodic check every 10 minutes
+        const intervalId = setInterval(checkForUpdate, 10 * 60 * 1000);
+
+        return () => {
+          window.removeEventListener('focus', checkForUpdate);
+          window.removeEventListener('online', checkForUpdate);
+          clearInterval(intervalId);
+        };
+      }).catch(() => {});
+
+      // Auto-reload when new controller takes over
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) {
+          refreshing = true;
+          window.location.reload();
+        }
+      });
     }
 
     const handleBeforeInstallPrompt = (e: any) => {
@@ -90,6 +141,16 @@ const MainContent: React.FC = () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     };
   }, [tasks, selectedTask]);
+
+  const handleApplyUpdate = () => {
+    if (waitingWorker) {
+      waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    }
+    setShowUpdateToast(false);
+    setTimeout(() => {
+      window.location.reload();
+    }, 150);
+  };
 
   const handleOpenCreateWith = (
     type: 'post' | 'task' | 'finance' | 'circle' | 'meeting',
@@ -256,6 +317,51 @@ const MainContent: React.FC = () => {
           isOpen={isNotifDrawerOpen}
           onClose={() => setIsNotifDrawerOpen(false)}
         />
+
+        {/* PWA New Version Update Floating Toast */}
+        <AnimatePresence>
+          {showUpdateToast && (
+            <motion.div
+              id="pwa-update-toast"
+              initial={{ opacity: 0, y: 50, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 30, scale: 0.95 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="fixed bottom-20 sm:bottom-6 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-[120] bg-slate-900/95 backdrop-blur-md text-white p-4 rounded-2xl shadow-2xl border border-slate-700/60 flex items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/30">
+                  <RefreshCw className="w-5 h-5 animate-spin text-teal-400" style={{ animationDuration: '3s' }} />
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-xs font-bold text-white tracking-wide flex items-center gap-1.5">
+                    Pembaruan Tersedia <Sparkles className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                  </h4>
+                  <p className="text-[11px] text-slate-300 truncate">
+                    Versi baru aplikasi siap digunakan.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  id="btn-apply-pwa-update"
+                  onClick={handleApplyUpdate}
+                  className="px-3.5 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 active:scale-95 text-slate-950 font-bold text-xs shadow-md transition-all whitespace-nowrap cursor-pointer"
+                >
+                  Perbarui
+                </button>
+                <button
+                  id="btn-dismiss-pwa-update"
+                  onClick={() => setShowUpdateToast(false)}
+                  className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                  title="Tutup notifikasi"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

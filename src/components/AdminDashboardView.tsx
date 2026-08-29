@@ -90,6 +90,78 @@ export const AdminDashboardView: React.FC = () => {
   const [userSearch, setUserSearch] = useState('');
   const [isUpdatingUser, setIsUpdatingUser] = useState(false);
 
+  // Live Database Status State
+  const [dbStatusState, setDbStatusState] = useState<{
+    connected: boolean;
+    engine: string;
+    host: string;
+    port: number;
+    user: string;
+    database: string;
+    error: string | null;
+    lastChecked: string;
+    tableCount: number;
+  } | null>(null);
+  const [isCheckingDb, setIsCheckingDb] = useState(false);
+  const [dbActionMsg, setDbActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSyncingDb, setIsSyncingDb] = useState(false);
+
+  // Fetch Database Status
+  const fetchDbStatus = async () => {
+    try {
+      setIsCheckingDb(true);
+      const res = await fetch('/api/db/status');
+      if (res.ok) {
+        const data = await res.json();
+        setDbStatusState(data);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch DB status:', e);
+    } finally {
+      setIsCheckingDb(false);
+    }
+  };
+
+  const handleReconnectDb = async () => {
+    try {
+      setIsCheckingDb(true);
+      setDbActionMsg(null);
+      const res = await fetch('/api/db/reconnect', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setDbActionMsg({ type: 'success', text: data.message });
+      } else {
+        setDbActionMsg({ type: 'error', text: data.message || data.error });
+      }
+      fetchDbStatus();
+      fetchMetrics();
+    } catch (e: any) {
+      setDbActionMsg({ type: 'error', text: 'Gagal menghubungkan: ' + e.message });
+    } finally {
+      setIsCheckingDb(false);
+    }
+  };
+
+  const handleSyncDb = async () => {
+    try {
+      setIsSyncingDb(true);
+      setDbActionMsg(null);
+      const res = await fetch('/api/db/sync-local-to-mysql', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setDbActionMsg({ type: 'success', text: data.message });
+      } else {
+        setDbActionMsg({ type: 'error', text: data.error || 'Gagal sinkronisasi data.' });
+      }
+      fetchDbStatus();
+      fetchMetrics();
+    } catch (e: any) {
+      setDbActionMsg({ type: 'error', text: 'Gagal sinkronisasi: ' + e.message });
+    } finally {
+      setIsSyncingDb(false);
+    }
+  };
+
   // Fetch metrics
   const fetchMetrics = async () => {
     try {
@@ -149,9 +221,11 @@ export const AdminDashboardView: React.FC = () => {
     fetchConfig();
     fetchSql(sqlDialect);
     fetchUsers();
+    fetchDbStatus();
 
     const interval = setInterval(() => {
       fetchMetrics();
+      fetchDbStatus();
     }, 15000); // Polling every 15s
 
     return () => clearInterval(interval);
@@ -828,6 +902,82 @@ export const AdminDashboardView: React.FC = () => {
       {/* TAB 3: SQL DATABASE MIGRATION & EXPORT */}
       {activeTab === 'sqlMigration' && (
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-2xs space-y-6 animate-in fade-in duration-200">
+          {/* Live MySQL Connection Banner */}
+          <div className={`p-5 rounded-2xl border ${
+            dbStatusState?.connected
+              ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+              : 'bg-amber-50/80 border-amber-200 text-amber-950'
+          } space-y-3`}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl ${
+                  dbStatusState?.connected ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-white'
+                }`}>
+                  <Database className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-bold">
+                      Status Database Saat Ini: {dbStatusState?.engine || 'Memeriksa...'}
+                    </h4>
+                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                      dbStatusState?.connected
+                        ? 'bg-emerald-200 text-emerald-800'
+                        : 'bg-amber-200 text-amber-900'
+                    }`}>
+                      {dbStatusState?.connected ? '● TERHUBUNG KE MYSQL REAL' : '● MODE IN-MEMORY / OFFLINE'}
+                    </span>
+                  </div>
+                  <p className="text-xs opacity-80 mt-0.5">
+                    {dbStatusState?.connected
+                      ? `Database: [${dbStatusState.database}] di ${dbStatusState.host}:${dbStatusState.port} • User: ${dbStatusState.user} • ${dbStatusState.tableCount} tabel aktif.`
+                      : (dbStatusState?.error || 'Database MySQL belum terhubung. Konfigurasikan file .env di cPanel.')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                <button
+                  onClick={handleReconnectDb}
+                  disabled={isCheckingDb}
+                  className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 text-xs font-bold shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-teal-700 ${isCheckingDb ? 'animate-spin' : ''}`} />
+                  <span>{isCheckingDb ? 'Menghubungkan...' : 'Uji & Sambungkan Ulang'}</span>
+                </button>
+
+                {dbStatusState?.connected && (
+                  <button
+                    onClick={handleSyncDb}
+                    disabled={isSyncingDb}
+                    className="px-3 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  >
+                    <Upload className={`w-3.5 h-3.5 ${isSyncingDb ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingDb ? 'Sinkronisasi...' : 'Sinkronkan Data Lokal ke DB'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {dbActionMsg && (
+              <div className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 ${
+                dbActionMsg.type === 'success' ? 'bg-emerald-100/80 text-emerald-900' : 'bg-rose-100/80 text-rose-900'
+              }`}>
+                {dbActionMsg.type === 'success' ? <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" /> : <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />}
+                <span>{dbActionMsg.text}</span>
+              </div>
+            )}
+
+            {!dbStatusState?.connected && (
+              <div className="text-[11px] bg-white/70 p-3 rounded-xl border border-amber-200/60 text-slate-700 space-y-1">
+                <div className="font-bold text-amber-900">💡 Cara Menghubungkan MySQL di Hosting / cPanel:</div>
+                <div>1. Buat file <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-amber-900">.env</code> di root folder hosting Anda.</div>
+                <div>2. Isi dengan: <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-amber-900">MYSQL_HOST=localhost</code> (atau <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-amber-900">127.0.0.1</code>), <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-amber-900">MYSQL_USER=user_anda</code>, <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-amber-900">MYSQL_PASSWORD=pass_anda</code>, <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-amber-900">MYSQL_DATABASE=db_anda</code>.</div>
+                <div>3. Klik tombol <strong>"Uji & Sambungkan Ulang"</strong> di atas atau Restart aplikasi di menu Setup Node.js cPanel.</div>
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
             <div>
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">

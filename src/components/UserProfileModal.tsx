@@ -18,7 +18,8 @@ import {
   LogOut,
   ArrowRight,
   ShieldAlert,
-  Sparkles,
+  Smartphone,
+  Download,
   Camera,
   Upload,
   Image as ImageIcon,
@@ -670,14 +671,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         </div>
 
         {/* PWA Install App Footer Bar */}
-        <div className="p-4 bg-teal-50/90 border-t border-teal-100 flex items-center justify-between gap-3 flex-shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-teal-800 text-white flex items-center justify-center font-bold text-xs shadow-2xs">
-              <Sparkles className="w-4 h-4 text-teal-200" />
+        <div className="p-4 bg-slate-50 border-t border-slate-200/80 flex items-center justify-between gap-3 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-teal-800 text-teal-100 flex items-center justify-center font-bold text-xs shadow-2xs shrink-0">
+              <Smartphone className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs font-bold text-teal-950">Aplikasi PWA Lingkar</div>
-              <div className="text-[10px] text-teal-700">Pasang aplikasi ke perangkat untuk akses kilat & push notifikasi</div>
+              <div className="text-xs font-bold text-slate-900">Aplikasi PWA Lingkar</div>
+              <div className="text-[11px] text-slate-500">Pasang ke layar utama untuk pengalaman aplikasi native mandiri</div>
             </div>
           </div>
           <button
@@ -693,12 +694,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   (window as any).deferredPrompt = null;
                 });
               } else {
-                alert('Aplikasi Lingkar sudah terpasang atau browser Anda telah memuatnya. Anda dapat memilih "Add to Home Screen" atau "Install App" pada menu titik tiga browser Anda.');
+                // If running standalone or already installed
+                const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone;
+                if (isStandalone) {
+                  alert('Aplikasi Lingkar sudah berjalan dalam mode PWA/Aplikasi terpasang.');
+                } else {
+                  alert('Untuk menginstal aplikasi:\n• Di Chrome/Edge Android/PC: Klik ikon Pasang/Install di bilah alamat browser atau menu titik tiga [⋮] > "Install Aplikasi".\n• Di Safari iOS: Tekan tombol Bagikan [Share] > pilih "Tambah ke Layar Utama" (Add to Home Screen).');
+                }
               }
             }}
-            className="px-3.5 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold shadow-xs transition-all active:scale-95 whitespace-nowrap cursor-pointer"
+            className="px-3.5 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold shadow-xs transition-all active:scale-95 whitespace-nowrap cursor-pointer flex items-center gap-1.5"
           >
-            Install Aplikasi
+            <Download className="w-3.5 h-3.5" />
+            <span>Install Aplikasi</span>
           </button>
         </div>
       </div>

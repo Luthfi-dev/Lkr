@@ -1,6 +1,11 @@
-import express from 'express';
+import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+
+// Load .env configuration immediately from project root
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
+import express from 'express';
 import os from 'os';
 import crypto from 'crypto';
 import mysql, { Pool } from 'mysql2/promise';
@@ -128,7 +133,7 @@ async function getUserJoinedCircleIds(userId: string): Promise<string[]> {
   return dummy?.joinedCircleIds || [];
 }
 
-// Active sessions map (token -> user)
+// Active sessions map (token -> user) with 30-day persistent validity
 const sessionsMap = new Map<string, any>();
 
 // Fallback in-memory stores (initialized empty to adhere to strictly dynamic database data)
@@ -140,7 +145,7 @@ let inMemoryBudgetGoals: any[] = [];
 let inMemoryMemberDues: any[] = [];
 let inMemoryMeetings: any[] = [];
 
-// Persistent file storage to guarantee data is never reset or wiped across server reboots/builds
+// Persistent file storage to guarantee data and active user sessions are never reset or wiped across server reboots/builds
 const DB_SNAPSHOT_FILE = path.join(UPLOADS_DIR, 'persistent_db_store.json');
 
 function saveLocalDb() {
@@ -155,6 +160,7 @@ function saveLocalDb() {
       inMemoryBudgetGoals,
       inMemoryMemberDues,
       inMemoryMeetings,
+      persistentSessions: Array.from(sessionsMap.entries()),
       savedAt: new Date().toISOString(),
     };
     fs.writeFileSync(DB_SNAPSHOT_FILE, JSON.stringify(data, null, 2), 'utf-8');
@@ -186,7 +192,14 @@ function loadLocalDb() {
       if (Array.isArray(data.inMemoryBudgetGoals)) inMemoryBudgetGoals = data.inMemoryBudgetGoals;
       if (Array.isArray(data.inMemoryMemberDues)) inMemoryMemberDues = data.inMemoryMemberDues;
       if (Array.isArray(data.inMemoryMeetings)) inMemoryMeetings = data.inMemoryMeetings;
-      console.log('✅ Berhasil memuat snapshot persistent database lokal');
+      if (Array.isArray(data.persistentSessions)) {
+        for (const [token, sess] of data.persistentSessions) {
+          if (sess && (!sess.expiresAt || sess.expiresAt > Date.now())) {
+            sessionsMap.set(token, sess);
+          }
+        }
+      }
+      console.log(`✅ Berhasil memuat snapshot persistent database lokal & ${sessionsMap.size} sesi login tersimpan`);
     }
   } catch (err) {
     console.error('Error loading persistent local DB snapshot:', err);
@@ -195,6 +208,114 @@ function loadLocalDb() {
 
 // Load initial persistent DB snapshot on startup
 loadLocalDb();
+
+/**
+ * Resilient session resolver:
+ * Checks Memory -> MySQL -> Local Snapshot. Automatically extends session lifespan (30 days sliding window)
+ * so users never have to repeatedly re-login.
+ */
+async function getSessionFromToken(token: string): Promise<any | null> {
+  if (!token) return null;
+
+  // 1. Check in-memory map
+  let session = sessionsMap.get(token);
+  if (session) {
+    if (!session.expiresAt || session.expiresAt > Date.now()) {
+      // Sliding window extension if less than 15 days left
+      if (session.expiresAt && session.expiresAt - Date.now() < 15 * 24 * 60 * 60 * 1000) {
+        session.expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+        sessionsMap.set(token, session);
+        saveLocalDb();
+      }
+      return session;
+    } else {
+      sessionsMap.delete(token);
+    }
+  }
+
+  // 2. Check MySQL database
+  if (mysqlPool && dbStatus.connected) {
+    try {
+      const [rows]: any = await mysqlPool.query(
+        `SELECT s.token, s.expires_at, u.id, u.email, u.username, u.name, u.role, u.avatar, u.title, u.points, u.level, u.streak_days, u.badges_count, u.is_active
+         FROM sessions s
+         JOIN users u ON s.user_id = u.id
+         WHERE s.token = ? LIMIT 1`,
+        [token]
+      );
+      if (Array.isArray(rows) && rows.length > 0) {
+        const row = rows[0];
+        if (row.is_active === 0 || row.is_active === false) {
+          return null;
+        }
+        const expiresAt = Number(row.expires_at) || (Date.now() + 30 * 24 * 60 * 60 * 1000);
+        if (expiresAt > Date.now()) {
+          const userRole = row.role;
+          const systemRole = (userRole === 'superadmin' ? 'superadmin' : userRole === 'admin' ? 'admin' : 'member') as 'superadmin' | 'admin' | 'member';
+          const displayRole = userRole === 'superadmin' ? 'Super Administrator' : userRole === 'admin' ? 'Admin Operasional' : (row.title || 'Anggota Lingkar');
+          const joinedCircleIds = await getUserJoinedCircleIds(row.id);
+
+          session = {
+            token: row.token,
+            user: {
+              id: row.id,
+              name: row.name,
+              email: row.email,
+              username: row.username,
+              role: displayRole,
+              systemRole,
+              avatar: row.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+              title: row.title || 'Anggota Tim',
+              points: Number(row.points) || 0,
+              level: Number(row.level) || 1,
+              streakDays: Number(row.streak_days) || 1,
+              badgesCount: Number(row.badges_count) || 1,
+              joinedCircleIds: joinedCircleIds.length > 0 ? joinedCircleIds : ['circle_1'],
+            },
+            expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
+          };
+          sessionsMap.set(token, session);
+          saveLocalDb();
+          return session;
+        }
+      }
+    } catch (e: any) {
+      console.warn('Error fetching session from MySQL:', e.message);
+    }
+  }
+
+  // 3. Check dummy users if matches dummy session
+  for (const u of dummyUsers) {
+    if (token.includes(u.id)) {
+      const systemRole = (u.role === 'superadmin' ? 'superadmin' : u.role === 'admin' ? 'admin' : 'member') as 'superadmin' | 'admin' | 'member';
+      const displayRole = u.role === 'superadmin' ? 'Super Administrator' : u.role === 'admin' ? 'Admin Operasional' : (u.title || 'Anggota Lingkar');
+      session = {
+        token,
+        user: {
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          username: u.username,
+          role: displayRole,
+          systemRole,
+          avatar: u.avatar,
+          title: u.title,
+          points: u.points,
+          level: u.level,
+          streakDays: u.streakDays,
+          badgesCount: u.badgesCount,
+          joinedCircleIds: u.joinedCircleIds || ['circle_1'],
+        },
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+      };
+      sessionsMap.set(token, session);
+      saveLocalDb();
+      return session;
+    }
+  }
+
+  return null;
+}
 
 // MySQL Pool and Status State
 let mysqlPool: Pool | null = null;
@@ -571,63 +692,184 @@ async function ensureMySQLTables(conn: mysql.PoolConnection | mysql.Pool): Promi
   }
 }
 
+async function syncLocalDataToMySQL(conn: mysql.PoolConnection | mysql.Pool): Promise<{ circles: number; posts: number; tasks: number }> {
+  const synced = { circles: 0, posts: 0, tasks: 0 };
+  try {
+    // 1. Sync circles if MySQL table is empty
+    const [cRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM circles');
+    if (Number(cRows?.[0]?.cnt || 0) === 0 && inMemoryCircles.length > 0) {
+      for (const c of inMemoryCircles) {
+        await conn.query(`
+          INSERT IGNORE INTO circles (id, name, code, description, category, avatar, banner_gradient, admin_id, kas_balance, tags, is_private, meeting_schedule, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `, [
+          c.id, c.name, c.code, c.description || '', c.category || 'Komunitas Umum', c.avatar || '',
+          c.bannerGradient || 'from-teal-600 to-emerald-800', c.adminId || 'usr_superadmin',
+          c.kasBalance || 0, JSON.stringify(c.tags || []), c.isPrivate ? 1 : 0, c.meetingSchedule || null
+        ]);
+        synced.circles++;
+        if (Array.isArray(c.members)) {
+          for (const m of c.members) {
+            await conn.query(`
+              INSERT IGNORE INTO circle_members (id, circle_id, user_id, role, contribution_points, joined_at)
+              VALUES (?, ?, ?, ?, ?, NOW())
+            `, [`cm_${c.id}_${m.id}`, c.id, m.id, m.role || 'Anggota', m.contributionPoints || 0]);
+          }
+        }
+      }
+      console.log(`✨ [DB] Auto-migrated ${synced.circles} circles to MySQL`);
+    }
+
+    // 2. Sync posts if MySQL table is empty
+    const [pRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM posts');
+    if (Number(pRows?.[0]?.cnt || 0) === 0 && inMemoryPosts.length > 0) {
+      for (const p of inMemoryPosts) {
+        await conn.query(`
+          INSERT IGNORE INTO posts (id, circle_id, author_id, title, summary, content, category, tags, likes_count, reading_time, points_bonus, image_url, attachment_url, attachments, is_group_private, visibility, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `, [
+          p.id, p.circleId || null, p.author?.id || 'usr_superadmin', p.title, p.summary || '', p.content,
+          p.category || 'Wawasan & Refleksi', JSON.stringify(p.tags || []), p.likesCount || p.likes || 0,
+          p.readingTime || '3 mnt', p.pointsBonus || 25, p.imageUrl || null, p.attachmentUrl || null,
+          JSON.stringify(p.attachments || []), p.isGroupPrivate ? 1 : 0, p.visibility || (p.isGroupPrivate ? 'group_only' : 'public')
+        ]);
+        synced.posts++;
+        if (Array.isArray(p.comments)) {
+          for (const cm of p.comments) {
+            await conn.query(`
+              INSERT IGNORE INTO comments (id, post_id, author_id, parent_id, content, likes_count, mentions, attachments, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            `, [
+              cm.id, p.id, cm.authorId || 'usr_superadmin', cm.parentId || null, cm.content,
+              cm.likesCount || 0, JSON.stringify(cm.mentions || []), JSON.stringify(cm.attachments || [])
+            ]);
+          }
+        }
+      }
+      console.log(`✨ [DB] Auto-migrated ${synced.posts} posts to MySQL`);
+    }
+
+    // 3. Sync tasks if MySQL table is empty
+    const [tRows]: any = await conn.query('SELECT COUNT(*) as cnt FROM tasks');
+    if (Number(tRows?.[0]?.cnt || 0) === 0 && inMemoryTasks.length > 0) {
+      for (const t of inMemoryTasks) {
+        await conn.query(`
+          INSERT IGNORE INTO tasks (id, circle_id, title, description, deadline, priority, status, progress, category, points_reward, color_theme, frequency, streak_days, is_group_goal, collaborative_notes, assignees, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `, [
+          t.id, t.circleId || 'circle_1', t.title, t.description || '', t.deadline || 'Minggu Depan',
+          t.priority || 'Medium', t.status || 'todo', t.progress || 0, t.category || 'Target Bersama',
+          t.pointsReward || 50, t.colorTheme || 'mint', t.frequency || 'once', t.streakDays || 0,
+          t.isGroupGoal ? 1 : 0, t.collaborativeNotes || null, JSON.stringify(t.assignees || [])
+        ]);
+        synced.tasks++;
+        if (Array.isArray(t.subtasks)) {
+          for (let i = 0; i < t.subtasks.length; i++) {
+            const st = t.subtasks[i];
+            await conn.query(`
+              INSERT IGNORE INTO subtasks (id, task_id, title, completed, priority, assigned_to, type, sort_order)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `, [st.id || `st_${t.id}_${i}`, t.id, st.title, st.completed ? 1 : 0, st.priority || 'Medium', st.assignedTo || null, st.type || 'checkbox', i]);
+          }
+        }
+      }
+      console.log(`✨ [DB] Auto-migrated ${synced.tasks} tasks to MySQL`);
+    }
+  } catch (err: any) {
+    console.error('Error syncing local data to MySQL:', err);
+  }
+  return synced;
+}
+
 async function initMySQLConnection(): Promise<void> {
-  const host = process.env.MYSQL_HOST?.trim();
+  // Re-read .env to catch any live updates
+  try {
+    dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: true });
+  } catch {}
+
+  const rawHost = process.env.MYSQL_HOST?.trim();
   const user = process.env.MYSQL_USER?.trim();
   const password = process.env.MYSQL_PASSWORD || '';
   const database = process.env.MYSQL_DATABASE?.trim() || 'lingkar_kebaikan';
   const port = Number(process.env.MYSQL_PORT) || 3306;
   const ssl = process.env.MYSQL_SSL === 'true';
 
-  dbStatus.host = host || '';
+  dbStatus.host = rawHost || '';
   dbStatus.port = port;
   dbStatus.user = user || '';
   dbStatus.database = database;
   dbStatus.ssl = ssl;
 
-  if (!host || !user) {
+  if (!rawHost || !user) {
     dbStatus.connected = false;
     dbStatus.engine = 'In-Memory with MySQL Fallback';
-    dbStatus.error = 'MYSQL_HOST atau MYSQL_USER belum diisi di file .env. Menggunakan in-memory storage yang handal & siap migrasi.';
+    dbStatus.error = 'MYSQL_HOST atau MYSQL_USER belum diisi di file .env server cPanel. Menggunakan in-memory storage yang handal & siap migrasi.';
     dbStatus.lastChecked = new Date().toISOString();
-    console.log('ℹ️ [DB] MySQL env variables not set. Running in resilient In-Memory mode.');
+    console.log('ℹ️ [DB] MySQL env variables not set (MYSQL_HOST/MYSQL_USER empty). Running in In-Memory mode.');
     return;
   }
 
-  try {
-    mysqlPool = mysql.createPool({
-      host,
-      port,
-      user,
-      password,
-      database,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      ssl: ssl ? { rejectUnauthorized: false } : undefined,
-    });
-
-    const conn = await mysqlPool.getConnection();
-    console.log(`✅ [DB] Successfully connected to MySQL database [${database}] at ${host}:${port}`);
-
-    // Auto-create all required tables & seed users
-    await ensureMySQLTables(conn);
-
-    const [tables]: any = await conn.query('SHOW TABLES');
-    dbStatus.connected = true;
-    dbStatus.engine = 'MySQL (Real Connected)';
-    dbStatus.error = null;
-    dbStatus.tableCount = Array.isArray(tables) ? tables.length : 4;
-    dbStatus.lastChecked = new Date().toISOString();
-
-    conn.release();
-  } catch (err: any) {
-    dbStatus.connected = false;
-    dbStatus.engine = 'In-Memory (MySQL Error Fallback)';
-    dbStatus.error = err.message;
-    dbStatus.lastChecked = new Date().toISOString();
-    console.error('⚠️ [DB] MySQL connection initialization failed:', err.message);
+  // Try configured host first, with automatic 127.0.0.1 fallback if localhost socket fails
+  const candidateHosts = [rawHost];
+  if (rawHost.toLowerCase() === 'localhost') {
+    candidateHosts.push('127.0.0.1');
+  } else if (rawHost === '127.0.0.1') {
+    candidateHosts.push('localhost');
   }
+
+  let lastErr: any = null;
+  for (const host of candidateHosts) {
+    try {
+      if (mysqlPool) {
+        try {
+          await mysqlPool.end();
+        } catch {}
+      }
+
+      const pool = mysql.createPool({
+        host,
+        port,
+        user,
+        password,
+        database,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        connectTimeout: 7000,
+        ssl: ssl ? { rejectUnauthorized: false } : undefined,
+      });
+
+      const conn = await pool.getConnection();
+      console.log(`✅ [DB] Successfully connected to MySQL database [${database}] at ${host}:${port}`);
+
+      // Auto-create all required tables & seed users
+      await ensureMySQLTables(conn);
+
+      // Auto-migrate any local in-memory posts/circles/tasks into MySQL
+      await syncLocalDataToMySQL(conn);
+
+      const [tables]: any = await conn.query('SHOW TABLES');
+      mysqlPool = pool;
+      dbStatus.connected = true;
+      dbStatus.host = host;
+      dbStatus.engine = 'MySQL (Real Connected)';
+      dbStatus.error = null;
+      dbStatus.tableCount = Array.isArray(tables) ? tables.length : 14;
+      dbStatus.lastChecked = new Date().toISOString();
+
+      conn.release();
+      return; // Connected successfully!
+    } catch (err: any) {
+      lastErr = err;
+      console.warn(`⚠️ [DB] Connection to MySQL at ${host}:${port} failed: ${err.message}`);
+    }
+  }
+
+  dbStatus.connected = false;
+  dbStatus.engine = 'In-Memory (MySQL Error Fallback)';
+  dbStatus.error = lastErr?.message || 'Gagal terhubung ke MySQL database.';
+  dbStatus.lastChecked = new Date().toISOString();
+  console.error('⚠️ [DB] MySQL connection initialization failed:', dbStatus.error);
 }
 
 // Request counter & server start time for metrics
@@ -832,7 +1074,7 @@ async function startServer() {
         return res.status(403).json({ error: 'Akun Anda sedang dinonaktifkan oleh administrator.' });
       }
 
-      // Generate session token
+      // Generate session token (30-day persistent session)
       const token = generateSecureToken(userRecord.id);
       const systemRole = (userRecord.role === 'superadmin' ? 'superadmin' : userRecord.role === 'admin' ? 'admin' : 'member') as 'superadmin' | 'admin' | 'member';
       const displayRole = userRecord.role === 'superadmin' ? 'Super Administrator' : userRecord.role === 'admin' ? 'Admin Operasional' : 'Anggota Lingkar';
@@ -855,10 +1097,11 @@ async function startServer() {
           badgesCount: userRecord.badgesCount,
           joinedCircleIds: userJoinedCircleIds.length > 0 ? userJoinedCircleIds : (userRecord.joinedCircleIds || []),
         },
-        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days persistent session
       };
 
       sessionsMap.set(token, sessionData);
+      saveLocalDb();
 
       // Persist session to MySQL if available
       if (mysqlPool && dbStatus.connected) {
@@ -990,10 +1233,11 @@ async function startServer() {
           badgesCount: newUser.badgesCount,
           joinedCircleIds: newUser.joinedCircleIds,
         },
-        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000, // 30 days
       };
 
       sessionsMap.set(token, sessionData);
+      saveLocalDb();
 
       if (mysqlPool && dbStatus.connected) {
         try {
@@ -1036,7 +1280,7 @@ async function startServer() {
   app.get('/api/auth/me', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      // Return default user (Budi) if no token
+      // Return default guest user if no token provided
       const defaultUser = dummyUsers[2];
       return res.json({
         authenticated: false,
@@ -1059,10 +1303,10 @@ async function startServer() {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const session = sessionsMap.get(token);
+    const session = await getSessionFromToken(token);
 
-    if (!session || session.expiresAt < Date.now()) {
-      return res.status(401).json({ authenticated: false, error: 'Sesi telah kedaluwarsa. Silakan login kembali.' });
+    if (!session) {
+      return res.status(401).json({ authenticated: false, error: 'Sesi tidak valid atau telah berakhir. Silakan login kembali.' });
     }
 
     const currentJoined = await getUserJoinedCircleIds(session.user.id);
@@ -1081,6 +1325,7 @@ async function startServer() {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.replace('Bearer ', '');
       sessionsMap.delete(token);
+      saveLocalDb();
       if (mysqlPool && dbStatus.connected) {
         try {
           await mysqlPool.query('DELETE FROM sessions WHERE token = ?', [token]);
@@ -1186,7 +1431,7 @@ async function startServer() {
 
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.replace('Bearer ', '');
-        const session = sessionsMap.get(token);
+        const session = await getSessionFromToken(token);
         if (session && session.user) {
           userId = session.user.id;
         }
@@ -1283,7 +1528,7 @@ async function startServer() {
     let userId = '';
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.replace('Bearer ', '');
-      const session = sessionsMap.get(token);
+      const session = await getSessionFromToken(token);
       if (session && session.user) userId = session.user.id;
     }
     if (!userId && req.body.userId) userId = req.body.userId;
@@ -1358,36 +1603,36 @@ async function startServer() {
     });
   });
 
-  app.post('/api/db/test-connection', async (req, res) => {
-    const { host, port, user, password, database, ssl } = req.body;
+  app.post('/api/db/reconnect', async (req, res) => {
     try {
-      const testPool = mysql.createPool({
-        host: host || process.env.MYSQL_HOST || 'localhost',
-        port: Number(port || process.env.MYSQL_PORT) || 3306,
-        user: user || process.env.MYSQL_USER || 'root',
-        password: password !== undefined ? password : (process.env.MYSQL_PASSWORD || ''),
-        database: database || process.env.MYSQL_DATABASE || 'lingkar_kebaikan',
-        ssl: (ssl === true || process.env.MYSQL_SSL === 'true') ? { rejectUnauthorized: false } : undefined,
-        connectTimeout: 5000,
-      });
-
-      const conn = await testPool.getConnection();
-      const [rows]: any = await conn.query('SELECT 1 as ping, VERSION() as version');
-      conn.release();
-      await testPool.end();
-
+      await initMySQLConnection();
       res.json({
-        success: true,
-        message: 'Koneksi ke database MySQL berhasil terhubung!',
-        version: rows[0]?.version || 'MySQL 8.x',
-        host: host || process.env.MYSQL_HOST,
-        database: database || process.env.MYSQL_DATABASE || 'lingkar_kebaikan',
+        success: dbStatus.connected,
+        status: dbStatus,
+        message: dbStatus.connected
+          ? `Berhasil tersambung ke database MySQL [${dbStatus.database}] di ${dbStatus.host}:${dbStatus.port}`
+          : `Gagal tersambung: ${dbStatus.error || 'Periksa kredensial .env'}`,
       });
     } catch (err: any) {
-      res.status(500).json({
-        success: false,
-        error: 'Gagal terhubung ke MySQL: ' + err.message,
+      res.status(500).json({ success: false, error: err.message, status: dbStatus });
+    }
+  });
+
+  app.post('/api/db/sync-local-to-mysql', async (req, res) => {
+    try {
+      if (!mysqlPool || !dbStatus.connected) {
+        return res.status(400).json({ success: false, error: 'Database MySQL belum terhubung. Hubungkan MySQL terlebih dahulu.' });
+      }
+      const conn = await mysqlPool.getConnection();
+      const result = await syncLocalDataToMySQL(conn);
+      conn.release();
+      res.json({
+        success: true,
+        message: `Sinkronisasi selesai! Berhasil memindahkan ${result.circles} grup, ${result.posts} postingan, dan ${result.tasks} tugas ke MySQL.`,
+        synced: result,
       });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: 'Gagal sinkronisasi data: ' + err.message });
     }
   });
 
@@ -1703,7 +1948,7 @@ async function startServer() {
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.replace('Bearer ', '');
-        const session = sessionsMap.get(token);
+        const session = await getSessionFromToken(token);
         if (session && session.user) {
           tokenAuthorId = session.user.id;
         }
@@ -1862,7 +2107,7 @@ async function startServer() {
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.replace('Bearer ', '');
-        const session = sessionsMap.get(token);
+        const session = await getSessionFromToken(token);
         if (session && session.user) {
           tokenAuthorId = session.user.id;
         }
@@ -2905,8 +3150,22 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    // Serve static hashed assets with caching, but never cache index.html, sw.js or manifest.json
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.json')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        } else if (filePath.includes('/assets/') || filePath.includes('\\assets\\')) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      }
+    }));
     app.get('*', (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

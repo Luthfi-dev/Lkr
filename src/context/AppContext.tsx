@@ -494,6 +494,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const checkAuthAndLoad = async () => {
       const token = localStorage.getItem('lingkar_auth_token');
       if (token) {
+        // Preload cached user immediately to prevent flicker
+        const cachedUser = loadStored('user', null);
+        if (cachedUser) {
+          setCurrentUser(cachedUser);
+          setIsAuthenticated(true);
+        }
+
         try {
           const res = await fetch('/api/auth/me', {
             headers: { Authorization: `Bearer ${token}` },
@@ -503,15 +510,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (data.authenticated && data.user) {
               setCurrentUser(data.user);
               setIsAuthenticated(true);
+              localStorage.setItem('lingkar_user', JSON.stringify(data.user));
             }
-          } else {
+          } else if (res.status === 401) {
+            // Explicitly unauthorized / invalidated by server
             localStorage.removeItem('lingkar_auth_token');
             localStorage.removeItem('lingkar_user');
             setIsAuthenticated(false);
             setCurrentUser(guestUser);
+          } else {
+            // Temporary server glitch / reboot -> retain cached session
+            if (cachedUser) {
+              setCurrentUser(cachedUser);
+              setIsAuthenticated(true);
+            }
           }
         } catch (e) {
-          // fallback
+          // Network offline / PWA offline -> maintain logged in state seamlessly
+          if (cachedUser) {
+            setCurrentUser(cachedUser);
+            setIsAuthenticated(true);
+          }
         }
       } else {
         setIsAuthenticated(false);
@@ -535,6 +554,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const data = await res.json();
       if (res.ok && data.token && data.user) {
         localStorage.setItem('lingkar_auth_token', data.token);
+        localStorage.setItem('lingkar_user', JSON.stringify(data.user));
         setCurrentUser(data.user);
         setIsAuthenticated(true);
         playSoundEffect('coin');
@@ -582,6 +602,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const resData = await res.json();
       if (res.ok && resData.token && resData.user) {
         localStorage.setItem('lingkar_auth_token', resData.token);
+        localStorage.setItem('lingkar_user', JSON.stringify(resData.user));
         setCurrentUser(resData.user);
         setIsAuthenticated(true);
         playSoundEffect('success');
