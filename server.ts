@@ -4644,7 +4644,11 @@ async function startServer() {
   // ==========================================
   // 5. VITE / STATIC PRODUCTION HANDLER
   // ==========================================
-  if (process.env.SERVE_DIST !== 'true') {
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.SERVE_DIST === 'true';
+
+  if (isProduction) {
+    serveStaticDist(app);
+  } else {
     try {
       const vite = await createViteServer({
         server: { middlewareMode: true },
@@ -4656,32 +4660,41 @@ async function startServer() {
       console.warn('Vite dev middleware failed, falling back to static dist:', e);
       serveStaticDist(app);
     }
-  } else {
-    serveStaticDist(app);
   }
 
   function serveStaticDist(expressApp: express.Express) {
     const distPath = path.join(process.cwd(), 'dist');
-    expressApp.use(express.static(distPath, {
-      setHeaders: (res, filePath) => {
-        // Always force revalidation for index.html, JS, CSS, sw.js to avoid stale iframe preview caches
-        if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.json') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
+    if (fs.existsSync(distPath)) {
+      expressApp.use(express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          // Always force revalidation for index.html, JS, CSS, sw.js to avoid stale cache
+          if (filePath.endsWith('index.html') || filePath.endsWith('sw.js') || filePath.endsWith('manifest.json') || filePath.endsWith('.js') || filePath.endsWith('.css')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+          }
+        }
+      }));
+      expressApp.get('*', (req, res) => {
+        const indexPath = path.join(distPath, 'index.html');
+        if (fs.existsSync(indexPath)) {
           res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
           res.setHeader('Pragma', 'no-cache');
           res.setHeader('Expires', '0');
+          res.sendFile(indexPath);
+        } else {
+          res.status(404).send('File index.html tidak ditemukan di dalam folder dist/. Jalankan "npm run build".');
         }
-      }
-    }));
-    expressApp.get('*', (req, res) => {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+      });
+    } else {
+      expressApp.get('*', (req, res) => {
+        res.status(500).send('Folder dist/ belum tersedia. Silakan jalankan "npm run build" terlebih dahulu di hosting.');
+      });
+    }
   }
 
-  app.listen(3000, '0.0.0.0', () => {
-    console.log(`🚀 Lingkar Server running on http://0.0.0.0:3000`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Lingkar Server running on http://0.0.0.0:${PORT}`);
     console.log(`📁 Uploads stored in: ${UPLOADS_DIR}`);
   });
 }
