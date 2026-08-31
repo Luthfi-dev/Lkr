@@ -16,6 +16,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { copyToClipboard } from '../utils/clipboard';
 import { Circle, CircleCategory } from '../types';
 
 interface CirclesModalProps {
@@ -92,7 +93,7 @@ export const CirclesModal: React.FC<CirclesModalProps> = ({ isOpen, onClose }) =
   };
 
   const handleCopyCode = (circle: Circle) => {
-    navigator.clipboard.writeText(circle.code);
+    copyToClipboard(circle.code);
     setCopiedCodeCircleId(circle.id);
     setTimeout(() => setCopiedCodeCircleId(null), 2000);
   };

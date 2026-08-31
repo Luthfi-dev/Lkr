@@ -75,6 +75,7 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({
     createMeeting,
     addTransaction,
     setActiveTab,
+    postCategories,
   } = useApp();
 
   const [selectedType, setSelectedType] = useState<'post' | 'task' | 'meeting' | 'finance'>(
@@ -90,9 +91,12 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({
   const selectedCircleObj = circles.find((c) => c.id === targetCircleId) || circles[0];
   const circleMembers = selectedCircleObj ? selectedCircleObj.members : [];
 
+  // Default category from postCategories or 'Umum'
+  const defaultPostCat = postCategories.find((c) => c.isDefault)?.name || postCategories[0]?.name || 'Umum';
+
   // Post form state
   const [postTitle, setPostTitle] = useState('');
-  const [postCategory, setPostCategory] = useState<PostCategory>('Rangkuman Buku');
+  const [postCategory, setPostCategory] = useState<string>(defaultPostCat);
   const [postSummary, setPostSummary] = useState('');
   const [postContent, setPostContent] = useState('');
   const [postTags, setPostTags] = useState('');
@@ -112,6 +116,7 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({
   const [taskCategory, setTaskCategory] = useState('Riset & Literasi');
   const [taskTheme, setTaskTheme] = useState<'mint' | 'lavender' | 'peach' | 'sky'>('mint');
   const [isGroupGoal, setIsGroupGoal] = useState(true);
+  const [isDelegated, setIsDelegated] = useState(false);
   const [selectedAssignees, setSelectedAssignees] = useState<TaskAssignee[]>([
     { id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar }
   ]);
@@ -305,6 +310,7 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({
       recurrenceDays: taskFrequency === 'custom_days' || taskFrequency === 'weekly' ? taskRecurrenceDays : undefined,
       recurrenceTime: taskFrequency !== 'once' ? taskRecurrenceTime : undefined,
       isGroupGoal: isGroupGoal,
+      isDelegated: isDelegated,
       pointsReward: pointsReward,
     });
 
@@ -540,10 +546,44 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({
                 <input
                   type="checkbox"
                   checked={isGroupGoal}
-                  onChange={(e) => setIsGroupGoal(e.target.checked)}
+                  onChange={(e) => {
+                    setIsGroupGoal(e.target.checked);
+                    if (e.target.checked) {
+                      setIsDelegated(false);
+                    }
+                  }}
                   className="sr-only peer"
                 />
                 <div className="w-10 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal-700"></div>
+              </label>
+            </div>
+
+            {/* Delegated Task Toggle */}
+            <div className="p-3 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl border border-indigo-200/80 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-indigo-800 text-white flex items-center justify-center flex-shrink-0">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-indigo-950">Tugas Mandiri Per Anggota Grup</h4>
+                  <p className="text-[11px] text-indigo-700">
+                    Setiap anggota mendapatkan checklist sendiri. Progres dihitung terpisah untuk masing-masing anggota.
+                  </p>
+                </div>
+              </div>
+              <label className="relative inline-flex inline-flex items-center cursor-pointer flex-shrink-0">
+                <input
+                  type="checkbox"
+                  checked={isDelegated}
+                  onChange={(e) => {
+                    setIsDelegated(e.target.checked);
+                    if (e.target.checked) {
+                      setIsGroupGoal(false);
+                    }
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-10 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-700"></div>
               </label>
             </div>
 
@@ -1275,14 +1315,14 @@ export const CreateActionModal: React.FC<CreateActionModalProps> = ({
                 </label>
                 <select
                   value={postCategory}
-                  onChange={(e) => setPostCategory(e.target.value as PostCategory)}
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                  onChange={(e) => setPostCategory(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 cursor-pointer"
                 >
-                  <option value="Rangkuman Buku">Rangkuman Buku</option>
-                  <option value="Wawasan & Artikel">Wawasan & Artikel</option>
-                  <option value="Materi Keilmuan">Materi Keilmuan</option>
-                  <option value="Catatan Diskusi">Catatan Diskusi</option>
-                  <option value="Misi Kebaikan">Misi Kebaikan</option>
+                  {postCategories.map((cat) => (
+                    <option key={cat.id} value={cat.name}>
+                      {cat.name} {cat.isDefault ? '(Default)' : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
 

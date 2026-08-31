@@ -30,11 +30,21 @@ export const QuickPostComposer: React.FC<QuickPostComposerProps> = ({
   onOpenFullModal,
   availableMembers,
 }) => {
-  const { currentUser, createPost, activeCircleId, activeCircle, circles, isAuthenticated, setIsAuthModalOpen } = useApp();
+  const {
+    currentUser,
+    createPost,
+    activeCircleId,
+    activeCircle,
+    circles,
+    isAuthenticated,
+    setIsAuthModalOpen,
+    postCategories,
+  } = useApp();
   const [isExpanded, setIsExpanded] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
-  const [category, setCategory] = useState<PostCategory>('Rangkuman Buku');
+  const defaultCatName = postCategories.find((c) => c.isDefault)?.name || postCategories[0]?.name || 'Umum';
+  const [category, setCategory] = useState<string>(defaultCatName);
   const [imageUrl, setImageUrl] = useState('');
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
   const [showImageInput, setShowImageInput] = useState(false);
@@ -44,13 +54,6 @@ export const QuickPostComposer: React.FC<QuickPostComposerProps> = ({
     activeCircleId !== 'all' ? activeCircleId : circles[0]?.id || 'circle_1'
   );
   const [privacy, setPrivacy] = useState<'public' | 'group_only'>('public');
-
-  const categories: PostCategory[] = [
-    'Rangkuman Buku',
-    'Wawasan & Artikel',
-    'Materi Keilmuan',
-    'Misi Kebaikan',
-  ];
 
   const presetImages = [
     { label: 'Buku & Catatan', url: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=1000&auto=format&fit=crop&q=80' },
@@ -273,18 +276,18 @@ export const QuickPostComposer: React.FC<QuickPostComposerProps> = ({
           {/* Category Selector Pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
             <span className="text-[11px] font-semibold text-slate-500 flex-shrink-0">Kategori:</span>
-            {categories.map((cat) => (
+            {postCategories.map((cat) => (
               <button
-                key={cat}
+                key={cat.id}
                 type="button"
-                onClick={() => setCategory(cat)}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all ${
-                  category === cat
+                onClick={() => setCategory(cat.name)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-medium whitespace-nowrap transition-all cursor-pointer ${
+                  category === cat.name
                     ? 'bg-teal-800 text-white font-semibold shadow-2xs'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                {cat}
+                {cat.name}
               </button>
             ))}
           </div>

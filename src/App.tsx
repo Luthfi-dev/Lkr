@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, Sparkles, X } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
+import { ToastProvider, useToast } from './context/ToastContext';
 import { NavbarHeader } from './components/NavbarHeader';
 import { BottomNav } from './components/BottomNav';
 import { HomeView } from './components/HomeView';
@@ -21,6 +22,7 @@ import { CreateActionModal } from './components/CreateActionModal';
 import { CreateGroupModal } from './components/CreateGroupModal';
 import { NotificationDrawer } from './components/NotificationDrawer';
 import { UserProfileModal } from './components/UserProfileModal';
+import { FeedbackModal } from './components/FeedbackModal';
 import { GroupDetailModal } from './components/GroupDetailModal';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { AuthModal } from './components/AuthModal';
@@ -55,6 +57,14 @@ const MainContent: React.FC = () => {
 
   const [selectedGroupForModal, setSelectedGroupForModal] = useState<Circle | null>(null);
   const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState(false);
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [userProfileModalTab, setUserProfileModalTab] = useState<'profile' | 'edit' | 'circles' | 'feedback'>('profile');
+
+  const openUserProfileWithTab = (tab: 'profile' | 'edit' | 'circles' | 'feedback') => {
+    setUserProfileModalTab(tab);
+    setIsUserProfileModalOpen(true);
+  };
+
   const [isCirclesModalOpen, setIsCirclesModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
@@ -67,57 +77,19 @@ const MainContent: React.FC = () => {
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
   const [showUpdateToast, setShowUpdateToast] = useState(false);
 
-  // Sync hash change and handle PWA Service Worker auto-update
+  // Regular web app initialization (PWA removed)
   React.useEffect(() => {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').then((reg) => {
-        // 1. Check if there's already an updated worker waiting
-        if (reg.waiting) {
-          setWaitingWorker(reg.waiting);
-          setShowUpdateToast(true);
-        }
-
-        // 2. Listen for newly detected updates
-        reg.addEventListener('updatefound', () => {
-          const newWorker = reg.installing;
-          if (newWorker) {
-            newWorker.addEventListener('statechange', () => {
-              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                // New update installed and ready to take over
-                setWaitingWorker(newWorker);
-                setShowUpdateToast(true);
-              }
-            });
-          }
-        });
-
-        // 3. Proactively check for updates when user returns to the tab or reconnects
-        const checkForUpdate = () => {
-          try {
-            reg.update().catch(() => {});
-          } catch {}
-        };
-
-        window.addEventListener('focus', checkForUpdate);
-        window.addEventListener('online', checkForUpdate);
-        // Periodic check every 10 minutes
-        const intervalId = setInterval(checkForUpdate, 10 * 60 * 1000);
-
-        return () => {
-          window.removeEventListener('focus', checkForUpdate);
-          window.removeEventListener('online', checkForUpdate);
-          clearInterval(intervalId);
-        };
-      }).catch(() => {});
-
-      // Auto-reload when new controller takes over
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!refreshing) {
-          refreshing = true;
-          window.location.reload();
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const reg of registrations) {
+          reg.unregister();
         }
       });
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          keys.forEach((key) => caches.delete(key));
+        });
+      }
     }
 
     const handleBeforeInstallPrompt = (e: any) => {
@@ -181,7 +153,7 @@ const MainContent: React.FC = () => {
       <div className="w-full max-w-2xl min-h-screen flex flex-col relative px-3 sm:px-4 pb-10">
         {/* Top Navbar */}
         <NavbarHeader
-          onOpenUserProfileModal={() => setIsUserProfileModalOpen(true)}
+          onOpenUserProfileModal={() => openUserProfileWithTab('profile')}
           onOpenCirclesModal={() => setIsCirclesModalOpen(true)}
           onOpenNotifDrawer={() => setIsNotifDrawerOpen(true)}
           onOpenCreateModal={() => {
@@ -210,6 +182,7 @@ const MainContent: React.FC = () => {
                   onOpenCreatePost={() => handleOpenCreateWith('post')}
                   onOpenCreateTransaction={() => handleOpenCreateWith('finance')}
                   onOpenGroupDetail={(circle) => setSelectedGroupForModal(circle)}
+                  onOpenFeedback={() => setIsFeedbackModalOpen(true)}
                 />
               )}
 
@@ -273,6 +246,17 @@ const MainContent: React.FC = () => {
             setIsUserProfileModalOpen(false);
             setSelectedGroupForModal(circle);
           }}
+          onOpenFeedback={() => {
+            setIsUserProfileModalOpen(false);
+            setIsFeedbackModalOpen(true);
+          }}
+          defaultTab={userProfileModalTab as any}
+        />
+
+        {/* Feedback Popup Modal */}
+        <FeedbackModal
+          isOpen={isFeedbackModalOpen}
+          onClose={() => setIsFeedbackModalOpen(false)}
         />
 
         {/* Group Detail Sheet Modal */}
@@ -370,7 +354,9 @@ const MainContent: React.FC = () => {
 export default function App() {
   return (
     <AppProvider>
-      <MainContent />
+      <ToastProvider>
+        <MainContent />
+      </ToastProvider>
     </AppProvider>
   );
 }

@@ -14,12 +14,16 @@ import {
   Crown,
   ArrowRight,
   Check,
-  Globe
+  Globe,
+  Share2,
+  Link as LinkIcon
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { copyToClipboard } from '../utils/clipboard';
 import { Circle, CircleCategory, Task } from '../types';
 import { GroupDetailRoom } from './GroupDetailRoom';
 import { MobilePagination } from './MobilePagination';
+import { CircleCardSkeleton } from './SkeletonLoader';
 
 interface GroupsViewProps {
   onOpenTaskDetail: (task: Task) => void;
@@ -43,15 +47,40 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     isAuthenticated,
     setIsAuthModalOpen,
     setActiveTab,
+    isInitialLoading,
+    isRefreshingData,
+    searchQuery,
+    setSearchQuery,
   } = useApp();
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [groupPage, setGroupPage] = useState(1);
   const [isJoinCodeModalOpen, setIsJoinCodeModalOpen] = useState(false);
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [joinError, setJoinError] = useState('');
   const [joinSuccess, setJoinSuccess] = useState('');
+  const [copiedCircleId, setCopiedCircleId] = useState<string | null>(null);
+
+  const handleShareLink = (circle: Circle, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof window !== 'undefined') {
+      const link = `${window.location.origin}/#join/${circle.code}`;
+      if (navigator.share) {
+        navigator.share({
+          title: `Bergabung ke grup ${circle.name}`,
+          text: `Ayo bergabung ke grup "${circle.name}" di Lingkar! Kode: ${circle.code}`,
+          url: link,
+        }).catch(() => {
+          copyToClipboard(link);
+        });
+      } else {
+        copyToClipboard(link);
+      }
+      setCopiedCircleId(circle.id);
+      setTimeout(() => setCopiedCircleId(null), 2000);
+    }
+  };
 
   React.useEffect(() => {
     setGroupPage(1);
@@ -138,22 +167,23 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     { id: 'Komunitas Kebaikan', label: 'Komunitas' },
   ];
 
-  const handleJoinCode = (e: React.FormEvent) => {
+  const handleJoinCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!joinCodeInput.trim()) return;
 
-    const res = joinCircleByCode(joinCodeInput);
+    setJoinError('');
+    setJoinSuccess('');
+    
+    const res = await joinCircleByCode(joinCodeInput);
     if (res.success) {
-      setJoinSuccess(res.message);
-      setJoinError('');
+      setJoinSuccess(res.message || 'Berhasil bergabung!');
       setTimeout(() => {
         setIsJoinCodeModalOpen(false);
         setJoinCodeInput('');
         setJoinSuccess('');
       }, 1200);
     } else {
-      setJoinError(res.message);
-      setJoinSuccess('');
+      setJoinError(res.message || res.error || 'Gagal bergabung.');
     }
   };
 
@@ -204,7 +234,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         <div className="grid grid-cols-3 gap-2 mt-3 text-center">
           <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-100">
             <div className="text-[10px] text-slate-500 font-semibold">Grup Tergabung</div>
-            <div className="text-base sm:text-lg font-black text-slate-900">{circles.length}</div>
+            <div className="text-base sm:text-lg font-black text-slate-900">{myCircles.length}</div>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-2xl border border-slate-100">
             <div className="text-[10px] text-slate-500 font-semibold">Tugas Berjalan</div>
@@ -250,7 +280,12 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 
       {/* WhatsApp-Style Group List */}
       <div className="space-y-3">
-        {filteredCircles.length === 0 ? (
+        {(isInitialLoading || isRefreshingData) ? (
+          <div className="space-y-3">
+            <CircleCardSkeleton />
+            <CircleCardSkeleton />
+          </div>
+        ) : filteredCircles.length === 0 ? (
           <div className="bg-white rounded-3xl p-8 text-center border border-slate-200/80 shadow-xs">
             <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <h3 className="font-bold text-slate-800 text-base">Tidak Ada Grup Ditemukan</h3>
@@ -378,9 +413,29 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                           </span>
                         </div>
 
-                        <div className="inline-flex items-center gap-1 text-teal-700 font-bold group-hover:translate-x-1 transition-transform shrink-0">
-                          <span>Buka Ruang</span>
-                          <ChevronRight className="w-4 h-4 shrink-0" />
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={(e) => handleShareLink(circle, e)}
+                            title="Bagikan Link Undangan Grup"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                          >
+                            {copiedCircleId === circle.id ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-600" />
+                                <span>Tersalin!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Share2 className="w-3 h-3 text-emerald-700" />
+                                <span>Bagikan</span>
+                              </>
+                            )}
+                          </button>
+
+                          <div className="inline-flex items-center gap-1 text-teal-700 font-bold group-hover:translate-x-1 transition-transform">
+                            <span>Buka Ruang</span>
+                            <ChevronRight className="w-4 h-4 shrink-0" />
+                          </div>
                         </div>
                       </div>
                     </div>

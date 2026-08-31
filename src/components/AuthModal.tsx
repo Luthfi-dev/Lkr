@@ -37,6 +37,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
 
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle');
+  const [usernameMessage, setUsernameMessage] = useState('');
+
+  useEffect(() => {
+    const clean = regUsername.trim().toLowerCase().replace(/^@/, '');
+    if (!clean) {
+      setUsernameStatus('idle');
+      setUsernameMessage('');
+      return;
+    }
+    if (clean.length < 3) {
+      setUsernameStatus('invalid');
+      setUsernameMessage('Username minimal 3 karakter.');
+      return;
+    }
+
+    setUsernameStatus('checking');
+    setUsernameMessage('Memeriksa ketersediaan...');
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/users/check-username/${encodeURIComponent(clean)}`);
+        const data = await res.json();
+        if (data.available) {
+          setUsernameStatus('available');
+          setUsernameMessage('✓ Username tersedia.');
+        } else {
+          setUsernameStatus('taken');
+          setUsernameMessage('✕ Username sudah digunakan.');
+        }
+      } catch {
+        setUsernameStatus('idle');
+        setUsernameMessage('');
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [regUsername]);
+
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -370,6 +409,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   onChange={(e) => setRegUsername(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700 focus:bg-white transition-all"
                 />
+                {usernameMessage && (
+                  <p
+                    className={`text-[11px] font-semibold mt-1 ${
+                      usernameStatus === 'available'
+                        ? 'text-emerald-600'
+                        : usernameStatus === 'taken' || usernameStatus === 'invalid'
+                        ? 'text-rose-600'
+                        : 'text-slate-500'
+                    }`}
+                  >
+                    {usernameMessage}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-1">
@@ -406,7 +458,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || usernameStatus === 'taken' || usernameStatus === 'invalid'}
                 className="w-full py-2.5 rounded-xl bg-teal-700 text-white hover:bg-teal-800 text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-60"
               >
                 {isLoading ? (

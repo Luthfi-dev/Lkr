@@ -51,20 +51,51 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
 
+  // Selected Members for step 2 (DEFAULT TO EMPTY / 0 MEMBERS)
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [memberRoles, setMemberRoles] = useState<Record<string, CircleMember['role']>>({});
+
+  // Initial Task for step 3
+  const [includeInitialTask, setIncludeInitialTask] = useState(true);
+  const [initialTaskTitle, setInitialTaskTitle] = useState('Kickoff Meeting & Pembagian Modul Kerja');
+  const [initialTaskDeadline, setInitialTaskDeadline] = useState('3 Hari Kedepan');
+  const [initialTaskPriority, setInitialTaskPriority] = useState<Priority>('High');
+  const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([currentUser.id]);
+
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+
   // Filter ONLY regular non-admin members for group creation
   const eligibleUsers = React.useMemo(() => {
     return allUsers.filter((u) => {
       if (u.id === currentUser.id) return false;
-      const sysRole = (u.systemRole || '').toLowerCase();
-      const userRole = (u.role || '').toLowerCase();
-      const userName = (u.name || '').toLowerCase();
-      const userEmail = (u.email || '').toLowerCase();
+      const sysRole = String(u.systemRole || '').toLowerCase();
+      const userRole = String(u.role || '').toLowerCase();
+      const userName = String(u.name || '').toLowerCase();
+      const userEmail = String(u.email || '').toLowerCase();
+      const userUsername = String(u.username || '').toLowerCase();
+
       if (sysRole === 'superadmin' || sysRole === 'admin') return false;
       if (userRole.includes('admin') || userRole.includes('superadmin')) return false;
+      if (userUsername.includes('admin') || userUsername.includes('superadmin')) return false;
       if (userName.includes('admin') || userEmail.includes('admin')) return false;
       return true;
     });
   }, [allUsers, currentUser.id]);
+
+  const filteredMembers = React.useMemo(() => {
+    const q = debouncedSearchQuery.toLowerCase().trim();
+    if (!q) {
+      // If no query typed, only show members that are already selected
+      return eligibleUsers.filter((u) => selectedUserIds.includes(u.id));
+    }
+    return eligibleUsers.filter((u) => {
+      const matchName = u.name.toLowerCase().includes(q);
+      const matchUsername = (u.username || '').toLowerCase().includes(q);
+      const matchEmail = (u.email || '').toLowerCase().includes(q);
+      return matchName || matchUsername || matchEmail;
+    });
+  }, [debouncedSearchQuery, eligibleUsers, selectedUserIds]);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -95,34 +126,6 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
 
     return () => clearTimeout(timer);
   }, [memberSearchQuery]);
-
-  // Selected Members for step 2 (DEFAULT TO EMPTY / 0 MEMBERS)
-  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
-  const [memberRoles, setMemberRoles] = useState<Record<string, CircleMember['role']>>({});
-
-  const filteredMembers = React.useMemo(() => {
-    const q = debouncedSearchQuery.toLowerCase().trim();
-    if (!q) {
-      // If no query typed, only show members that are already selected
-      return eligibleUsers.filter((u) => selectedUserIds.includes(u.id));
-    }
-    return eligibleUsers.filter((u) => {
-      const matchName = u.name.toLowerCase().includes(q);
-      const matchUsername = (u.username || '').toLowerCase().includes(q);
-      const matchEmail = (u.email || '').toLowerCase().includes(q);
-      return matchName || matchUsername || matchEmail;
-    });
-  }, [debouncedSearchQuery, eligibleUsers, selectedUserIds]);
-
-  // Initial Task for step 3
-  const [includeInitialTask, setIncludeInitialTask] = useState(true);
-  const [initialTaskTitle, setInitialTaskTitle] = useState('Kickoff Meeting & Pembagian Modul Kerja');
-  const [initialTaskDeadline, setInitialTaskDeadline] = useState('3 Hari Kedepan');
-  const [initialTaskPriority, setInitialTaskPriority] = useState<Priority>('High');
-  const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([currentUser.id]);
-
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
-  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
   const handleKasChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawDigits = e.target.value.replace(/[^0-9]/g, '');
@@ -414,7 +417,7 @@ export const CreateGroupModal: React.FC<CreateGroupModalProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mb-3">
-                  Anda otomatis menjadi Pembuat/Admin grup. Hanya pengguna ber-role anggota biasa yang ditampilkan. Admin dan Superadmin disembunyikan otomatis.
+                  Anda otomatis menjadi Pembuat/Ketua grup. Silakan pilih anggota yang ingin Anda tambahkan di bawah ini.
                 </p>
 
                 {/* Search Member Input */}

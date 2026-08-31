@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, 
   User as UserIcon, 
@@ -25,10 +25,18 @@ import {
   Image as ImageIcon,
   Save,
   Check,
-  RefreshCw
+  RefreshCw,
+  MessageSquarePlus,
+  Send,
+  Sparkles,
+  HelpCircle,
+  Bug,
+  Lightbulb,
+  ThumbsUp,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { Circle } from '../types';
+import { useToast } from '../context/ToastContext';
+import { Circle, FeedbackCategory } from '../types';
 import { uploadMediaFile } from '../utils/imageOptimizer';
 
 const PRESET_AVATARS = [
@@ -40,11 +48,21 @@ const PRESET_AVATARS = [
   'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80',
 ];
 
+const FEEDBACK_CATEGORIES: { label: FeedbackCategory; icon: any; color: string }[] = [
+  { label: 'Saran Fitur', icon: Lightbulb, color: 'amber' },
+  { label: 'Laporan Kendala (Bug)', icon: Bug, color: 'rose' },
+  { label: 'Desain & Tampilan (UI/UX)', icon: Sparkles, color: 'purple' },
+  { label: 'Performa & Kecepatan', icon: Zap, color: 'blue' },
+  { label: 'Ide Komunitas', icon: Users, color: 'emerald' },
+  { label: 'Lainnya', icon: MessageSquarePlus, color: 'teal' },
+];
+
 interface UserProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenCreateGroup: () => void;
   onOpenGroupDetail: (circle: Circle) => void;
+  defaultTab?: 'profile' | 'edit' | 'circles' | 'feedback';
 }
 
 export const UserProfileModal: React.FC<UserProfileModalProps> = ({
@@ -52,6 +70,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   onClose,
   onOpenCreateGroup,
   onOpenGroupDetail,
+  defaultTab,
 }) => {
   const {
     currentUser,
@@ -67,10 +86,20 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     setIsAuthModalOpen,
     isAuthenticated,
     updateUserProfile,
+    submitFeedback,
+    changePassword,
   } = useApp();
+
+  const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState<'profile' | 'edit' | 'circles'>('profile');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setActiveTab(defaultTab || 'profile');
+    }
+  }, [isOpen, defaultTab]);
 
   // Edit Form State
   const [editName, setEditName] = useState(currentUser.name || '');
@@ -79,9 +108,65 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const [editAvatar, setEditAvatar] = useState(currentUser.avatar || '');
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
-  const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
-  const [saveErrorMsg, setSaveErrorMsg] = useState('');
+
+  const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle');
+  const [usernameMessage, setUsernameMessage] = useState('');
+
+  useEffect(() => {
+    const clean = editUsername.trim().toLowerCase().replace(/^@/, '');
+    if (!clean || clean === (currentUser.username || '').toLowerCase()) {
+      setUsernameStatus('idle');
+      setUsernameMessage('');
+      return;
+    }
+    if (clean.length < 3) {
+      setUsernameStatus('invalid');
+      setUsernameMessage('Username minimal 3 karakter.');
+      return;
+    }
+
+    setUsernameStatus('checking');
+    setUsernameMessage('Memeriksa ketersediaan...');
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/users/check-username/${encodeURIComponent(clean)}?excludeUserId=${currentUser.id}`);
+        const data = await res.json();
+        if (data.available) {
+          setUsernameStatus('available');
+          setUsernameMessage('✓ Username tersedia.');
+        } else {
+          setUsernameStatus('taken');
+          setUsernameMessage('✕ Username sudah digunakan.');
+        }
+      } catch {
+        setUsernameStatus('idle');
+        setUsernameMessage('');
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [editUsername, currentUser.id, currentUser.username]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Password Change State
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [showPasswordSection, setShowPasswordSection] = useState(false);
+
+  // Feedback Form State
+  const [feedbackCategory, setFeedbackCategory] = useState<FeedbackCategory>('Saran Fitur');
+  const [feedbackRating, setFeedbackRating] = useState<number>(5);
+  const [feedbackTitle, setFeedbackTitle] = useState<string>('');
+  const [feedbackMessage, setFeedbackMessage] = useState<string>('');
+  const [feedbackName, setFeedbackName] = useState<string>(currentUser.name || '');
+  const [feedbackEmail, setFeedbackEmail] = useState<string>(currentUser.email || '');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [feedbackSuccessMsg, setFeedbackSuccessMsg] = useState('');
+  const [feedbackErrorMsg, setFeedbackErrorMsg] = useState('');
 
   if (!isOpen) return null;
 
@@ -111,7 +196,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
     try {
       setIsUploadingPhoto(true);
-      setSaveErrorMsg('');
       const res = await uploadMediaFile(file);
 
       if (res.url) {
@@ -121,12 +205,11 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
           avatar: res.url,
         });
         if (updateRes.success) {
-          setSaveSuccessMsg('Foto profil berhasil diperbarui!');
-          setTimeout(() => setSaveSuccessMsg(''), 3000);
+          showToast('Foto profil berhasil diperbarui!', 'success');
         }
       }
     } catch (err: any) {
-      setSaveErrorMsg(err.message || 'Gagal mengunggah foto.');
+      showToast(err.message || 'Gagal mengunggah foto.', 'error');
     } finally {
       setIsUploadingPhoto(false);
     }
@@ -135,8 +218,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSavingProfile(true);
-    setSaveSuccessMsg('');
-    setSaveErrorMsg('');
 
     try {
       const res = await updateUserProfile({
@@ -147,15 +228,81 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
       });
 
       if (res.success) {
-        setSaveSuccessMsg('Foto profil & data diri berhasil diperbarui!');
-        setTimeout(() => setSaveSuccessMsg(''), 3500);
+        showToast('Data profil berhasil diperbarui!', 'success');
       } else {
-        setSaveErrorMsg(res.error || 'Gagal memperbarui profil.');
+        showToast(res.error || 'Gagal memperbarui profil.', 'error');
       }
     } catch (err: any) {
-      setSaveErrorMsg(err.message || 'Terjadi kesalahan sistem.');
+      showToast(err.message || 'Terjadi kesalahan sistem.', 'error');
     } finally {
       setIsSavingProfile(false);
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      showToast('Harap lengkapi semua kolom kata sandi.', 'error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast('Konfirmasi kata sandi baru tidak cocok.', 'error');
+      return;
+    }
+    if (newPassword.length < 6) {
+      showToast('Kata sandi baru minimal 6 karakter.', 'error');
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const res = await changePassword(currentPassword, newPassword);
+      if (res.success) {
+        showToast('Kata sandi berhasil diperbarui!', 'success');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setShowPasswordSection(false);
+      } else {
+        showToast(res.error || 'Gagal memperbarui kata sandi.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Terjadi kesalahan saat mengubah kata sandi.', 'error');
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const handleSendFeedback = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!feedbackTitle.trim() || !feedbackMessage.trim()) {
+      showToast('Mohon lengkapi judul dan rincian saran masukan Anda.', 'error');
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+
+    try {
+      const res = await submitFeedback({
+        category: feedbackCategory,
+        title: feedbackTitle.trim(),
+        message: feedbackMessage.trim(),
+        rating: feedbackRating,
+        userName: feedbackName.trim() || currentUser.name,
+        userEmail: feedbackEmail.trim() || currentUser.email,
+      });
+
+      if (res.success) {
+        showToast('Saran masukan berhasil dikirim! Terima kasih.', 'success');
+        setFeedbackTitle('');
+        setFeedbackMessage('');
+      } else {
+        showToast(res.error || 'Gagal mengirim saran masukan.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Terjadi kesalahan sistem saat mengirim masukan.', 'error');
+    } finally {
+      setIsSubmittingFeedback(false);
     }
   };
 
@@ -246,10 +393,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         </div>
 
         {/* Tab switchers */}
-        <div className="flex border-b border-slate-100 px-4 pt-2 bg-slate-50">
+        <div className="flex border-b border-slate-100 px-4 pt-2 bg-slate-50 overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('profile')}
-            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'profile'
                 ? 'border-teal-800 text-teal-900'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -265,24 +412,39 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               setEditUsername(currentUser.username || '');
               setEditAvatar(currentUser.avatar || '');
             }}
-            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'edit'
                 ? 'border-teal-800 text-teal-900'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             <Camera className="w-3.5 h-3.5 text-teal-700" />
-            <span>Perbarui Foto & Profil</span>
+            <span>Perbarui Profil</span>
           </button>
           <button
             onClick={() => setActiveTab('circles')}
-            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer ${
+            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'circles'
                 ? 'border-teal-800 text-teal-900'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
             Lingkar Saya ({userCircles.length})
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('feedback');
+              setFeedbackSuccessMsg('');
+              setFeedbackErrorMsg('');
+            }}
+            className={`pb-2.5 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'feedback'
+                ? 'border-teal-800 text-teal-900'
+                : 'border-transparent text-teal-700 hover:text-teal-950 font-bold'
+            }`}
+          >
+            <MessageSquarePlus className="w-3.5 h-3.5 text-teal-700" />
+            <span>Kirim Saran Masukan</span>
           </button>
         </div>
 
@@ -353,20 +515,48 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 </div>
               </div>
 
-              {/* Sesi Akun & Keluar (Logout) */}
+              {/* Feedback CTA Card in Profile Tab */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-200/80 flex items-center justify-between gap-3 shadow-2xs">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-teal-950 text-xs font-bold">
+                    <Sparkles className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                    <span>Kirim Saran & Masukan</span>
+                  </div>
+                  <p className="text-[10px] text-teal-800/90 mt-0.5">
+                    Bantu kami menyempurnakan fitur & pengalaman aplikasi Lingkar.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('feedback');
+                    setFeedbackSuccessMsg('');
+                    setFeedbackErrorMsg('');
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-[11px] font-bold shadow-2xs shrink-0 cursor-pointer flex items-center gap-1"
+                >
+                  <span>Kirim</span>
+                  <ArrowRight className="w-3 h-3" />
+                </button>
+              </div>
+
+              {/* Sesi Akun & Keamanan (Ganti Password & Logout) */}
               <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
                 <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
-                  Sesi & Keamanan Akun
+                  Informasi Akun & Keamanan
                 </span>
 
                 <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-slate-900 truncate">
-                      {currentUser.email || currentUser.username}
+                      {currentUser.name}
+                    </div>
+                    <div className="text-[10px] text-slate-500 truncate">
+                      {currentUser.email || `${currentUser.username}@lingkarkebaikan.org`}
                     </div>
                     <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
                       <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                      <span>Sesi Aktif ({currentUser.systemRole === 'superadmin' ? 'Superadmin' : currentUser.systemRole === 'admin' ? 'Admin' : 'User Member'})</span>
+                      <span>Peran: {currentUser.systemRole === 'superadmin' ? 'Superadmin' : currentUser.systemRole === 'admin' ? 'Admin' : 'User Member'}</span>
                     </div>
                   </div>
                   <button
@@ -378,29 +568,108 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   </button>
                 </div>
 
+                {/* Change Password Collapsible / Toggle */}
+                {!showPasswordSection ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordSection(true)}
+                    className="w-full py-2 px-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold transition-all flex items-center justify-between cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-teal-700" />
+                      <span>Ubah Kata Sandi (Password)</span>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                  </button>
+                ) : (
+                  <form onSubmit={handleChangePassword} className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-teal-700" />
+                        Form Ganti Kata Sandi
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowPasswordSection(false)}
+                        className="text-[10px] font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
+                      >
+                        Tutup
+                      </button>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-700">Kata Sandi Saat Ini</label>
+                      <input
+                        type="password"
+                        required
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-700">Kata Sandi Baru (Min. 6 Karakter)</label>
+                      <input
+                        type="password"
+                        required
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-700">Konfirmasi Kata Sandi Baru</label>
+                      <input
+                        type="password"
+                        required
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 outline-none"
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isChangingPassword}
+                      className="w-full py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-60"
+                    >
+                      {isChangingPassword ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Menyimpan Sandi...</span>
+                        </>
+                      ) : (
+                        <span>Perbarui Kata Sandi</span>
+                      )}
+                    </button>
+                  </form>
+                )}
+
                 {/* Logout Button */}
                 {showLogoutConfirm ? (
-                  <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 space-y-2 animate-in fade-in">
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 space-y-2">
                     <div className="flex items-center gap-2 text-rose-900 text-xs font-bold">
                       <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
                       <span>Yakin ingin keluar dari akun ini?</span>
                     </div>
-                    <p className="text-[11px] text-rose-700 leading-relaxed">
-                      Sesi login Anda akan dihapus dari peramban ini. Anda dapat masuk kembali kapan saja.
-                    </p>
                     <div className="flex items-center gap-2 pt-1">
                       <button
                         type="button"
                         onClick={handleLogout}
-                        className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        className="flex-1 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
                       >
                         <LogOut className="w-3.5 h-3.5" />
-                        <span>Ya, Keluar Akun</span>
+                        <span>Ya, Keluar</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => setShowLogoutConfirm(false)}
-                        className="px-3 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 transition-all cursor-pointer"
+                        className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 transition-all cursor-pointer"
                       >
                         Batal
                       </button>
@@ -410,9 +679,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setShowLogoutConfirm(true)}
-                    className="w-full py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100/80 text-rose-700 hover:text-rose-800 text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-2xs group cursor-pointer"
+                    className="w-full py-2 px-3 rounded-xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <LogOut className="w-4 h-4 text-rose-500 group-hover:scale-110 transition-transform" />
+                    <LogOut className="w-4 h-4 text-rose-500" />
                     <span>Keluar dari Akun (Logout)</span>
                   </button>
                 )}
@@ -422,22 +691,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
           {/* TAB 2: UBAH FOTO & PERBARUI PROFIL */}
           {activeTab === 'edit' && (
-            <form onSubmit={handleSaveProfile} className="space-y-4 animate-in fade-in duration-200">
-              {saveSuccessMsg && (
-                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>{saveSuccessMsg}</span>
-                </div>
-              )}
-
-              {saveErrorMsg && (
-                <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center gap-2 animate-in fade-in">
-                  <ShieldAlert className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>{saveErrorMsg}</span>
-                </div>
-              )}
-
-              {/* Photo Upload & Preview Section */}
+            <div className="space-y-6 animate-in fade-in duration-200">
+              <form onSubmit={handleSaveProfile} className="space-y-4">
+                {/* Photo Upload & Preview Section */}
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
                 <label className="text-xs font-bold text-slate-800 block">Foto Profil Pengguna</label>
                 
@@ -551,6 +807,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                       className="w-full pl-8 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white transition-all font-medium"
                     />
                   </div>
+                  {usernameMessage && (
+                    <p
+                      className={`text-[11px] font-semibold mt-1 ${
+                        usernameStatus === 'available'
+                          ? 'text-emerald-600'
+                          : usernameStatus === 'taken' || usernameStatus === 'invalid'
+                          ? 'text-rose-600'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      {usernameMessage}
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -568,7 +837,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={isSavingProfile || isUploadingPhoto}
+                  disabled={isSavingProfile || isUploadingPhoto || usernameStatus === 'taken' || usernameStatus === 'invalid'}
                   className="w-full py-3 px-4 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-60"
                 >
                   {isSavingProfile ? (
@@ -585,6 +854,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 </button>
               </div>
             </form>
+          </div>
           )}
 
           {/* TAB 3: LINGKAR SAYA */}
@@ -668,6 +938,152 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* TAB 4: KIRIM SARAN & MASUKAN */}
+          {activeTab === 'feedback' && (
+            <div className="space-y-4 animate-in fade-in duration-200">
+              <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-200/80 flex items-start gap-3">
+                <div className="w-8 h-8 rounded-xl bg-teal-800 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                  <MessageSquarePlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900">Saran & Masukan Pengguna</h4>
+                  <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
+                    Setiap saran, kritik membangun, atau laporan kendala akan langsung tersimpan di sistem dan ditinjau oleh tim Superadmin demi peningkatan aplikasi Lingkar.
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleSendFeedback} className="space-y-3.5">
+                {/* Category Selector */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-800 block">Kategori Masukan</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                    {FEEDBACK_CATEGORIES.map((cat) => {
+                      const Icon = cat.icon;
+                      const isSelected = feedbackCategory === cat.label;
+                      return (
+                        <button
+                          key={cat.label}
+                          type="button"
+                          onClick={() => setFeedbackCategory(cat.label)}
+                          className={`p-2 rounded-xl border text-left flex items-center gap-2 transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-teal-50 border-teal-600 text-teal-900 shadow-2xs font-bold ring-1 ring-teal-600'
+                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                          }`}
+                        >
+                          <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-teal-700' : 'text-slate-400'}`} />
+                          <span className="text-[11px] truncate">{cat.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Rating Stars */}
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-bold text-slate-800">Tingkat Kepuasan</div>
+                    <div className="text-[10px] text-slate-500">Nilai pengalaman penggunaan aplikasi saat ini</div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => setFeedbackRating(star)}
+                        className="p-1 text-slate-300 hover:text-amber-400 focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <Star
+                          className={`w-5 h-5 ${
+                            star <= feedbackRating
+                              ? 'fill-amber-400 text-amber-400'
+                              : 'text-slate-300'
+                          }`}
+                        />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Title */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-800 block">
+                    Judul Ringkas <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={feedbackTitle}
+                    onChange={(e) => setFeedbackTitle(e.target.value)}
+                    placeholder="Contoh: Usulan fitur ekspor laporan donasi ke format PDF/Excel"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white transition-all font-medium placeholder:text-slate-400"
+                  />
+                </div>
+
+                {/* Detailed Message */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-800 block">
+                    Detail Saran Masukan / Kendala <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    required
+                    rows={3}
+                    value={feedbackMessage}
+                    onChange={(e) => setFeedbackMessage(e.target.value)}
+                    placeholder="Tuliskan rincian kebutuhan, saran desain, atau penjelasan masalah yang dihadapi..."
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white transition-all font-medium placeholder:text-slate-400 resize-none"
+                  />
+                </div>
+
+                {/* Sender name & email */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700">Nama Pengirim</label>
+                    <input
+                      type="text"
+                      value={feedbackName}
+                      onChange={(e) => setFeedbackName(e.target.value)}
+                      placeholder="Nama Anda"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white font-medium"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-700">Email untuk Feedback (Opsional)</label>
+                    <input
+                      type="email"
+                      value={feedbackEmail}
+                      onChange={(e) => setFeedbackEmail(e.target.value)}
+                      placeholder="email@anda.com"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Submit Button */}
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSubmittingFeedback}
+                    className="w-full py-3 px-4 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-60"
+                  >
+                    {isSubmittingFeedback ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Mengirimkan Masukan ke Database...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>Kirim Saran Masukan ke Tim Superadmin</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
         </div>
 
         {/* PWA Install App Footer Bar */}
@@ -708,6 +1124,19 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             <Download className="w-3.5 h-3.5" />
             <span>Install Aplikasi</span>
           </button>
+        </div>
+
+        {/* Development by maudigi.com Footer Bar */}
+        <div className="py-2.5 px-4 bg-slate-900 text-slate-400 text-center text-[11px] font-medium border-t border-slate-800 flex items-center justify-center gap-1.5 flex-shrink-0">
+          <span>Development by</span>
+          <a
+            href="https://maudigi.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-bold text-teal-400 hover:text-teal-300 hover:underline transition-colors"
+          >
+            maudigi.com
+          </a>
         </div>
       </div>
     </div>

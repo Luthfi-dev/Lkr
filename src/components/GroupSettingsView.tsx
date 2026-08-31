@@ -8,6 +8,20 @@ import { ConfirmationModal } from './ConfirmationModal';
 export const GroupSettingsView = ({ circle, onBack }: { circle: Circle; onBack: () => void }) => {
   const { updateCircle, deleteCircle, currentUser } = useApp();
   
+  // Safety check: Only admins/ketua should be here
+  const myMembership = circle.members.find(m => m.id === currentUser.id);
+  const isAdmin = currentUser.systemRole === 'superadmin' || currentUser.systemRole === 'admin' || myMembership?.role === 'Ketua' || myMembership?.role === 'Kreator';
+
+  if (!isAdmin) {
+    return (
+      <div className="p-8 text-center bg-white rounded-3xl border border-slate-200">
+        <h2 className="text-lg font-bold text-slate-900 text-rose-600">Akses Ditolak</h2>
+        <p className="text-xs text-slate-500 mt-2">Anda tidak memiliki izin (Admin/Ketua) untuk mengubah pengaturan grup ini.</p>
+        <button onClick={onBack} className="mt-6 px-5 py-2 bg-slate-900 text-white rounded-2xl text-xs font-bold active:scale-95 transition-all">Kembali</button>
+      </div>
+    );
+  }
+
   const [name, setName] = useState(circle.name);
   const [description, setDescription] = useState(circle.description);
   const [category, setCategory] = useState<CircleCategory>(circle.category);

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Post, CircleMember, Comment, PostAttachment } from '../types';
 import { useApp } from '../context/AppContext';
+import { copyToClipboard } from '../utils/clipboard';
 import { MentionText } from './MentionText';
 import { MentionInput } from './MentionInput';
 import { AttachmentList } from './AttachmentList';
@@ -81,7 +82,7 @@ export const PostCard: React.FC<PostCardProps> = ({
 
   const handleCopyLink = () => {
     const textToCopy = `📚 *${post.title}* (${post.category})\nOleh ${post.author.name}\n\n${post.summary || post.content}\n\n*Dibagikan via Lingkar*`;
-    navigator.clipboard.writeText(textToCopy);
+    copyToClipboard(textToCopy);
     setCopiedLink(true);
     setTimeout(() => {
       setCopiedLink(false);

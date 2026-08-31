@@ -10,32 +10,17 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+      dedupe: ['react', 'react-dom'],
+    },
+    optimizeDeps: {
+      include: ['react', 'react-dom'],
     },
     build: {
       sourcemap: false,
-      minify: 'esbuild',
-      chunkSizeWarningLimit: 1000,
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('recharts')) {
-                return 'vendor-recharts';
-              }
-              if (id.includes('lucide-react')) {
-                return 'vendor-icons';
-              }
-              if (id.includes('motion')) {
-                return 'vendor-motion';
-              }
-              return 'vendor';
-            }
-          },
-        },
-      },
+      minify: 'esbuild' as const,
+      chunkSizeWarningLimit: 2000,
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },

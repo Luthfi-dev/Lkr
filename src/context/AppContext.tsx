@@ -18,10 +18,15 @@ import {
   MemberDue,
   TaskStatus,
   PostCategory,
+  PostCategoryItem,
+  FeedbackItem,
+  FeedbackCategory,
+  FeedbackStatus,
   TransactionType,
   Priority,
   Subtask,
   AppConfig,
+  LeaderboardMember,
 } from '../types';
 import {
   guestUser,
@@ -43,17 +48,20 @@ interface AppContextType {
   notifications: NotificationItem[];
   meetings: MeetingAgenda[];
   allUsers: User[];
+  leaderboard: LeaderboardMember[];
   searchQuery: string;
   activeTab: 'home' | 'groups' | 'sharing' | 'tasks' | 'finance' | 'leaderboard' | 'admin';
   selectedGroupForRoom: string | null;
   soundEnabled: boolean;
   isAuthModalOpen: boolean;
   isAuthenticated: boolean;
+  isInitialLoading: boolean;
   postLoginAction: (() => void) | null;
   setPostLoginAction: React.Dispatch<React.SetStateAction<(() => void) | null>>;
   isRefreshingData: boolean;
   appConfig: AppConfig;
   refreshData: () => Promise<void>;
+  refreshLeaderboard: () => Promise<void>;
   fetchAppConfig: () => Promise<void>;
   updateAppConfig: (newCfg: Partial<AppConfig>) => Promise<boolean>;
   updateUserProfile: (data: { name?: string; title?: string; avatar?: string; username?: string }) => Promise<{ success: boolean; user?: User; error?: string }>;
@@ -118,6 +126,7 @@ interface AppContextType {
     recurrenceDays?: number[];
     recurrenceTime?: string;
     isGroupGoal?: boolean;
+    isDelegated?: boolean;
     pointsReward?: number;
   }) => Promise<void>;
   updateTask: (taskId: string, data: Partial<Omit<Task, 'id' | 'createdAt'>>) => Promise<void>;
@@ -185,13 +194,13 @@ interface AppContextType {
   addMemberToCircle: (
     circleId: string,
     member: { id: string; name: string; avatar: string; role?: CircleMember['role'] }
-  ) => void;
+  ) => Promise<void>;
   updateMemberRole: (
     circleId: string,
     memberId: string,
     newRole: CircleMember['role']
-  ) => void;
-  removeMemberFromCircle: (circleId: string, memberId: string) => void;
+  ) => Promise<void>;
+  removeMemberFromCircle: (circleId: string, memberId: string) => Promise<void>;
 
   // Finance Actions
   addTransaction: (data: {
@@ -222,6 +231,27 @@ interface AppContextType {
   markAllNotificationsRead: () => void;
   markNotificationRead: (id: string) => void;
   addNotification: (notif: Omit<NotificationItem, 'id' | 'time' | 'read'>) => void;
+
+  // Post Categories Management
+  postCategories: PostCategoryItem[];
+  fetchPostCategories: () => Promise<void>;
+  createPostCategory: (cat: Partial<PostCategoryItem>) => Promise<{ success: boolean; message?: string; error?: string }>;
+  updatePostCategory: (id: string, cat: Partial<PostCategoryItem>) => Promise<{ success: boolean; message?: string; error?: string }>;
+  deletePostCategory: (id: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+
+  // Feedback / Suggestions Management
+  feedbacks: FeedbackItem[];
+  fetchFeedbacks: () => Promise<void>;
+  submitFeedback: (fb: {
+    category: FeedbackCategory;
+    title: string;
+    message: string;
+    rating?: number;
+    userName?: string;
+    userEmail?: string;
+  }) => Promise<{ success: boolean; message?: string; error?: string }>;
+  updateFeedbackStatus: (id: string, status: FeedbackStatus, adminNotes?: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+  deleteFeedback: (id: string) => Promise<{ success: boolean; message?: string; error?: string }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -267,11 +297,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const notifications = isAuthenticated ? rawNotifications : [];
   const [meetings, setMeetings] = useState<MeetingAgenda[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardMember[]>([]);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+
+  // Dynamic Post Categories State (with default 'Umum')
+  const [postCategories, setPostCategories] = useState<PostCategoryItem[]>([
+    { id: 'cat_umum', name: 'Umum', description: 'Kategori publikasi umum dan kabar komunitas', icon: 'Globe', color: 'teal', isDefault: true, sortOrder: 0, postCount: 0 },
+    { id: 'cat_edukasi', name: 'Edukasi', description: 'Materi pembelajaran dan artikel edukatif', icon: 'BookOpen', color: 'blue', isDefault: false, sortOrder: 1, postCount: 0 },
+    { id: 'cat_inisiatif', name: 'Inisiatif', description: 'Inisiatif proyek kebaikan dan gerakan sosial', icon: 'Sparkles', color: 'emerald', isDefault: false, sortOrder: 2, postCount: 0 },
+    { id: 'cat_pengumuman', name: 'Pengumuman', description: 'Pengumuman resmi dan agenda penting', icon: 'Bell', color: 'amber', isDefault: false, sortOrder: 3, postCount: 0 },
+    { id: 'cat_opini', name: 'Opini', description: 'Sudut pandang, esai, dan catatan refleksi', icon: 'Feather', color: 'purple', isDefault: false, sortOrder: 4, postCount: 0 },
+    { id: 'cat_buku', 'name': 'Rangkuman Buku', description: 'Ringkasan buku inspiratif dan literasi', icon: 'Bookmark', color: 'indigo', isDefault: false, sortOrder: 5, postCount: 0 },
+    { id: 'cat_keilmuan', name: 'Materi Keilmuan', description: 'Riset, teknologi, dan sains terapan', icon: 'Cpu', color: 'cyan', isDefault: false, sortOrder: 6, postCount: 0 },
+    { id: 'cat_misi', name: 'Misi Kebaikan', description: 'Aksi nyata kerelawanan dan gotong royong', icon: 'Heart', color: 'rose', isDefault: false, sortOrder: 7, postCount: 0 },
+  ]);
+
+  // Feedbacks state
+  const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
 
   // Hash Router for Online Page Navigation & Direct URL Indexing
   const getTabFromHash = (hash: string): 'home' | 'groups' | 'sharing' | 'tasks' | 'finance' | 'leaderboard' | 'admin' => {
     const cleanHash = hash.replace(/^#\/?/, '').split('/')[0];
-    if (cleanHash === 'groups' || cleanHash === 'group') return 'groups';
+    if (cleanHash === 'groups' || cleanHash === 'group' || cleanHash === 'join') return 'groups';
     if (cleanHash === 'tasks' || cleanHash === 'task') return 'tasks';
     if (cleanHash === 'finance') return 'finance';
     if (cleanHash === 'sharing' || cleanHash === 'posts') return 'sharing';
@@ -282,8 +329,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const getGroupIdFromHash = (hash: string): string | null => {
     const parts = hash.replace(/^#\/?/, '').split('/');
-    if (parts[0] === 'group' && parts[1]) {
+    if ((parts[0] === 'group' || parts[0] === 'groups') && parts[1] && parts[1] !== 'join') {
       return parts[1];
+    }
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('lingkar_active_group_room') : null;
+    if (saved && (parts[0] === 'groups' || parts[0] === 'group' || !parts[0])) {
+      return saved;
     }
     return null;
   };
@@ -298,14 +349,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [selectedGroupForRoom, setSelectedGroupForRoom] = useState<string | null>(() => {
-    if (typeof window !== 'undefined' && window.location.hash) {
-      return getGroupIdFromHash(window.location.hash);
+    if (typeof window !== 'undefined') {
+      const fromHash = window.location.hash ? getGroupIdFromHash(window.location.hash) : null;
+      if (fromHash) return fromHash;
+      const saved = localStorage.getItem('lingkar_active_group_room');
+      if (saved) return saved;
     }
     return null;
   });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isRefreshingData, setIsRefreshingData] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const [appConfig, setAppConfig] = useState<AppConfig>({
     appName: 'Lingkar',
@@ -396,6 +452,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           prev.map((u) => (u.id === currentUser.id ? { ...u, ...updatedUser } : u))
         );
 
+        await refreshData();
+
         return { success: true, user: updatedUser };
       }
       return { success: false, error: result.error || 'Gagal memperbarui profil.' };
@@ -405,13 +463,211 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Function to refresh all data directly from MySQL database
+  const refreshLeaderboard = async () => {
+    try {
+      const res = await fetch('/api/leaderboard');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.leaderboard)) {
+          setLeaderboard(data.leaderboard);
+        }
+      }
+    } catch (err) {
+      console.error('Gagal mengambil data peringkat:', err);
+    }
+  };
+
+  // Fetch & manage dynamic categories
+  const fetchPostCategories = async () => {
+    try {
+      const res = await fetch('/api/posts/categories');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.categories) && data.categories.length > 0) {
+          setPostCategories(data.categories);
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching categories:', e);
+    }
+  };
+
+  const createPostCategory = async (cat: Partial<PostCategoryItem>): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const res = await fetch('/api/posts/categories', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(cat),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await fetchPostCategories();
+        return { success: true, message: data.message };
+      }
+      return { success: false, error: data.error || 'Gagal menambahkan kategori.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Terjadi kesalahan jaringan.' };
+    }
+  };
+
+  const updatePostCategory = async (id: string, cat: Partial<PostCategoryItem>): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const res = await fetch(`/api/posts/categories/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(cat),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await fetchPostCategories();
+        await refreshData();
+        return { success: true, message: data.message };
+      }
+      return { success: false, error: data.error || 'Gagal memperbarui kategori.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Terjadi kesalahan jaringan.' };
+    }
+  };
+
+  const deletePostCategory = async (id: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const res = await fetch(`/api/posts/categories/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await fetchPostCategories();
+        await refreshData();
+        return { success: true, message: data.message };
+      }
+      return { success: false, error: data.error || 'Gagal menghapus kategori.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Terjadi kesalahan jaringan.' };
+    }
+  };
+
+  // Feedback helpers
+  const fetchFeedbacks = async () => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const res = await fetch('/api/feedbacks', {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.feedbacks)) {
+          setFeedbacks(data.feedbacks);
+        }
+      }
+    } catch (e) {
+      console.error('Error fetching feedbacks:', e);
+    }
+  };
+
+  const submitFeedback = async (fb: {
+    category: FeedbackCategory;
+    title: string;
+    message: string;
+    rating?: number;
+    userName?: string;
+    userEmail?: string;
+  }): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const payload = {
+        ...fb,
+        userId: currentUser.id,
+        userName: fb.userName || (currentUser.role !== 'guest' ? currentUser.name : 'Pengguna Lingkar'),
+        userEmail: fb.userEmail || (currentUser.role !== 'guest' ? currentUser.email : ''),
+        userAvatar: currentUser.avatar,
+      };
+
+      const res = await fetch('/api/feedbacks', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await fetchFeedbacks();
+        return { success: true, message: data.message || 'Saran masukan berhasil dikirim!' };
+      }
+      return { success: false, error: data.error || 'Gagal mengirim saran masukan.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Terjadi kesalahan jaringan.' };
+    }
+  };
+
+  const updateFeedbackStatus = async (id: string, status: FeedbackStatus, adminNotes?: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const res = await fetch(`/api/feedbacks/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          status,
+          adminNotes,
+          respondedBy: currentUser.name,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await fetchFeedbacks();
+        return { success: true, message: data.message };
+      }
+      return { success: false, error: data.error || 'Gagal memperbarui status masukan.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Terjadi kesalahan jaringan.' };
+    }
+  };
+
+  const deleteFeedback = async (id: string): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const res = await fetch(`/api/feedbacks/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        await fetchFeedbacks();
+        return { success: true, message: data.message };
+      }
+      return { success: false, error: data.error || 'Gagal menghapus masukan.' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Terjadi kesalahan jaringan.' };
+    }
+  };
+
   const refreshData = async () => {
     setIsRefreshingData(true);
     const token = localStorage.getItem('lingkar_auth_token');
     const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      const [postsRes, circlesRes, tasksRes, txRes, bgRes, duesRes, meetRes, usersRes, cfgRes] = await Promise.allSettled([
+      const [postsRes, circlesRes, tasksRes, txRes, bgRes, duesRes, meetRes, usersRes, cfgRes, catRes, fbRes, meRes] = await Promise.allSettled([
         fetch('/api/posts', { headers: authHeaders }),
         fetch('/api/circles', { headers: authHeaders }),
         fetch('/api/tasks', { headers: authHeaders }),
@@ -421,6 +677,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         fetch('/api/meetings', { headers: authHeaders }),
         fetch('/api/admin/users', { headers: authHeaders }),
         fetch('/api/admin/config'),
+        fetch('/api/posts/categories'),
+        fetch('/api/feedbacks', { headers: authHeaders }),
+        fetch('/api/auth/me', { headers: authHeaders }),
       ]);
 
       if (postsRes.status === 'fulfilled' && postsRes.value.ok) {
@@ -477,10 +736,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setAppConfig(data);
         }
       }
+      if (catRes.status === 'fulfilled' && catRes.value.ok) {
+        const data = await catRes.value.json();
+        if (Array.isArray(data.categories) && data.categories.length > 0) {
+          setPostCategories(data.categories);
+        }
+      }
+      if (fbRes.status === 'fulfilled' && fbRes.value.ok) {
+        const data = await fbRes.value.json();
+        if (Array.isArray(data.feedbacks)) {
+          setFeedbacks(data.feedbacks);
+        }
+      }
+      if (meRes && meRes.status === 'fulfilled' && meRes.value.ok) {
+        const data = await meRes.value.json();
+        if (data.authenticated && data.user) {
+          setCurrentUser(data.user);
+          localStorage.setItem('lingkar_user', JSON.stringify(data.user));
+        }
+      }
+
+      await refreshLeaderboard();
     } catch (err) {
       console.error('Gagal mengambil data dari database:', err);
     } finally {
       setIsRefreshingData(false);
+      setIsInitialLoading(false);
     }
   };
 
@@ -539,10 +820,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       // Load dynamic database entities
       await refreshData();
+      setIsInitialLoading(false);
     };
 
     checkAuthAndLoad();
   }, []);
+
+  // Listen for direct share links (e.g. #join/CODE or ?join=CODE)
+  useEffect(() => {
+    if (isInitialLoading) return;
+
+    const processJoinLink = async () => {
+      if (typeof window === 'undefined') return;
+
+      let codeToJoin: string | null = null;
+      const hash = window.location.hash || '';
+      
+      if (hash.startsWith('#join/')) {
+        codeToJoin = hash.replace('#join/', '').trim();
+      } else if (hash.startsWith('#join=')) {
+        codeToJoin = hash.replace('#join=', '').trim();
+      } else {
+        const params = new URLSearchParams(window.location.search);
+        const qJoin = params.get('join') || params.get('code');
+        if (qJoin && qJoin.trim()) {
+          codeToJoin = qJoin.trim();
+        }
+      }
+
+      if (!codeToJoin) return;
+      codeToJoin = decodeURIComponent(codeToJoin).toUpperCase();
+
+      if (isAuthenticated && currentUser.id !== 'guest') {
+        const res = await joinCircleByCode(codeToJoin);
+        if (res.success) {
+          setActiveTab('groups');
+          if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+            window.history.replaceState(null, '', window.location.pathname + '#groups');
+          }
+        }
+      } else {
+        const targetCode = codeToJoin;
+        setPostLoginAction(() => async () => {
+          const res = await joinCircleByCode(targetCode);
+          if (res.success) {
+            setActiveTab('groups');
+            if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+              window.history.replaceState(null, '', window.location.pathname + '#groups');
+            }
+          }
+        });
+        setIsAuthModalOpen(true);
+      }
+    };
+
+    processJoinLink();
+
+    const handleHashChange = () => {
+      processJoinLink();
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [isInitialLoading, isAuthenticated, currentUser.id]);
 
   const login = async (identifier: string, password: string): Promise<{ success: boolean; role?: string; error?: string }> => {
     try {
@@ -665,9 +1005,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const targetGroupId = getGroupIdFromHash(hash);
 
       setActiveTabState(targetTab);
-      setSelectedGroupForRoom(targetGroupId);
       if (targetGroupId) {
+        setSelectedGroupForRoom(targetGroupId);
         setActiveCircleId(targetGroupId);
+        localStorage.setItem('lingkar_active_group_room', targetGroupId);
+      } else if (targetTab !== 'groups') {
+        setSelectedGroupForRoom(null);
+        localStorage.removeItem('lingkar_active_group_room');
       }
     };
 
@@ -679,31 +1023,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveTabState(tab);
     if (tab !== 'groups') {
       setSelectedGroupForRoom(null);
+      localStorage.removeItem('lingkar_active_group_room');
     }
     const targetHash = tab === 'home' ? '' : `#${tab}`;
     if (window.location.hash !== targetHash) {
-      window.history.pushState(null, '', targetHash || window.location.pathname);
+      window.location.hash = targetHash;
     }
   };
-
-  const [searchQuery, setSearchQuery] = useState('');
-  const [soundEnabled, setSoundEnabled] = useState(true);
 
   const openGroupRoom = (circleId: string) => {
     setSelectedGroupForRoom(circleId);
     setActiveCircleId(circleId);
     setActiveTabState('groups');
+    localStorage.setItem('lingkar_active_group_room', circleId);
     const targetHash = `#group/${circleId}`;
     if (window.location.hash !== targetHash) {
-      window.history.pushState(null, '', targetHash);
+      window.location.hash = targetHash;
     }
   };
 
   const closeGroupRoom = () => {
     setSelectedGroupForRoom(null);
-    if (window.location.hash.startsWith('#group')) {
-      window.history.pushState(null, '', '#groups');
-    }
+    localStorage.removeItem('lingkar_active_group_room');
+    window.location.hash = '#groups';
   };
 
   // Sync current user to localStorage
@@ -764,13 +1106,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const addPoints = (points: number, reason: string) => {
     playSoundEffect('coin');
     setCurrentUser((prev) => {
-      const newPoints = prev.points + points;
+      const newPoints = Math.max(0, (prev.points || 0) + points);
       const newLevel = Math.floor(newPoints / 300) + 1;
-      return {
+      const updated = {
         ...prev,
         points: newPoints,
         level: newLevel,
       };
+      try {
+        localStorage.setItem('lingkar_user', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // Update in allUsers & leaderboard locally for immediate UI response
+    setAllUsers((prev) =>
+      prev.map((u) => {
+        if (u.id === currentUser.id) {
+          const newPts = Math.max(0, (u.points || 0) + points);
+          return { ...u, points: newPts, level: Math.floor(newPts / 300) + 1 };
+        }
+        return u;
+      })
+    );
+
+    setLeaderboard((prev) => {
+      const updated = prev.map((m) => {
+        if (m.id === currentUser.id) {
+          const newPts = Math.max(0, (m.contributionPoints || 0) + points);
+          return {
+            ...m,
+            contributionPoints: newPts,
+            level: Math.floor(newPts / 300) + 1,
+          };
+        }
+        return m;
+      });
+      return updated.sort((a, b) => b.contributionPoints - a.contributionPoints).map((item, idx) => ({
+        ...item,
+        rank: idx + 1,
+      }));
     });
 
     addNotification({
@@ -779,6 +1154,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       type: 'point',
       linkTab: 'leaderboard',
     });
+
+    // Persist real points to database
+    const token = localStorage.getItem('lingkar_auth_token');
+    if (token || (currentUser.id && currentUser.id !== 'guest')) {
+      fetch('/api/users/points', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ points, reason, userId: currentUser.id }),
+      })
+        .then((r) => r.json())
+        .then((resData) => {
+          if (resData.success && resData.user) {
+            setCurrentUser((prev) => ({
+              ...prev,
+              points: resData.points ?? prev.points,
+              level: resData.level ?? prev.level,
+            }));
+            refreshLeaderboard();
+          }
+        })
+        .catch((err) => console.error('Points sync error:', err));
+    }
   };
 
   const addNotification = (notif: Omit<NotificationItem, 'id' | 'time' | 'read'>) => {
@@ -1254,6 +1654,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     recurrenceDays?: number[];
     recurrenceTime?: string;
     isGroupGoal?: boolean;
+    isDelegated?: boolean;
     pointsReward?: number;
   }) => {
     const targetCircleId = data.circleId || (activeCircleId !== 'all' ? activeCircleId : circles[0]?.id || 'circle_1');
@@ -1283,6 +1684,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           recurrenceDays: data.recurrenceDays,
           recurrenceTime: data.recurrenceTime,
           isGroupGoal: data.isGroupGoal,
+          isDelegated: data.isDelegated,
           pointsReward: data.pointsReward,
         }),
       });
@@ -1475,6 +1877,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id === taskId) {
+          if (task.isDelegated) {
+            const completions = [...(task.userCompletions || [])];
+            let userComp = completions.find((c) => c.userId === currentUser.id);
+            if (!userComp) {
+              userComp = {
+                userId: currentUser.id,
+                userName: currentUser.name,
+                avatar: currentUser.avatar,
+                completed: false,
+                completedSubtaskIds: [],
+                completedCount: 0,
+                updatedAt: new Date().toISOString(),
+              };
+              completions.push(userComp);
+            } else {
+              userComp = { ...userComp, completedSubtaskIds: [...userComp.completedSubtaskIds] };
+              const idx = completions.indexOf(completions.find((c) => c.userId === currentUser.id)!);
+              completions[idx] = userComp;
+            }
+
+            const subIdx = userComp.completedSubtaskIds.indexOf(subtaskId);
+            if (subIdx > -1) {
+              userComp.completedSubtaskIds.splice(subIdx, 1);
+              // Optionally remove note when unchecking
+            } else {
+              userComp.completedSubtaskIds.push(subtaskId);
+              if (note) {
+                userComp.subtaskNotes = { 
+                  ...(userComp.subtaskNotes || {}), 
+                  [subtaskId]: note 
+                };
+              }
+            }
+
+            const allSubtaskIds = task.subtasks.map((st) => st.id);
+            const isFullyCompleted = allSubtaskIds.length > 0 && allSubtaskIds.every((id) => userComp.completedSubtaskIds.includes(id));
+            const wasCompleted = userComp.completed;
+            userComp.completed = isFullyCompleted;
+            userComp.updatedAt = new Date().toISOString();
+
+            if (isFullyCompleted && !wasCompleted) {
+              triggerCelebration();
+              addPoints(task.pointsReward, `Menuntaskan seluruh target bersama: "${task.title}"`);
+            } else {
+              playSoundEffect('click');
+              addPoints(10, `Menyelesaikan sub-checklist`);
+            }
+
+            return {
+              ...task,
+              userCompletions: completions,
+            };
+          }
+
           let wasToggled = false;
           const updatedSubtasks = task.subtasks.map((st) => {
             if (st.id === subtaskId) {
@@ -1527,14 +1983,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const token = localStorage.getItem('lingkar_auth_token');
     try {
+      const payload: any = {};
+      if (note !== undefined) {
+        payload.note = note;
+      }
       await fetch(`/api/tasks/${taskId}/subtasks/${subtaskId}/toggle`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined,
       });
     } catch (e) {}
   };
 
-  const updateSubtaskValue = (taskId: string, subtaskId: string, currentValue: number) => {
+  const updateSubtaskValue = async (taskId: string, subtaskId: string, currentValue: number) => {
+    let updatedSubtaskObj: any = null;
+    let computedProgress = 0;
+    let computedStatus: TaskStatus = 'todo';
+
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id === taskId) {
@@ -1543,16 +2011,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               const target = Number(st.targetValue) || 1;
               const val = Math.max(0, currentValue);
               const isCompleted = val >= target;
-              return {
+              updatedSubtaskObj = {
                 ...st,
                 currentValue: val,
                 completed: isCompleted,
               };
+              return updatedSubtaskObj;
             }
             return st;
           });
 
           const { progress, status } = calcTaskSubtaskStats(updatedSubtasks);
+          computedProgress = progress;
+          computedStatus = status;
 
           if (progress === 100 && task.status !== 'done') {
             triggerCelebration();
@@ -1569,20 +2040,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return task;
       })
     );
+
+    const token = localStorage.getItem('lingkar_auth_token');
+    try {
+      if (updatedSubtaskObj) {
+        await fetch(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            currentValue: updatedSubtaskObj.currentValue,
+            completed: updatedSubtaskObj.completed,
+          }),
+        });
+      }
+    } catch (e) {}
   };
 
-  const updateSubtaskOption = (taskId: string, subtaskId: string, selectedOption: string) => {
+  const updateSubtaskOption = async (taskId: string, subtaskId: string, selectedOption: string) => {
+    let updatedSubtaskObj: any = null;
+
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id === taskId) {
           const updatedSubtasks = task.subtasks.map((st) => {
             if (st.id === subtaskId) {
               const isDoneOption = selectedOption === 'Selesai' || selectedOption === 'Tuntas' || selectedOption === 'Selesai Sempurna';
-              return {
+              updatedSubtaskObj = {
                 ...st,
                 selectedOption,
                 completed: isDoneOption,
               };
+              return updatedSubtaskObj;
             }
             return st;
           });
@@ -1605,21 +2096,86 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return task;
       })
     );
+
+    const token = localStorage.getItem('lingkar_auth_token');
+    try {
+      if (updatedSubtaskObj) {
+        await fetch(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            selectedOption: updatedSubtaskObj.selectedOption,
+            completed: updatedSubtaskObj.completed,
+          }),
+        });
+      }
+    } catch (e) {}
   };
 
-  const updateSubtaskNote = (taskId: string, subtaskId: string, note: string) => {
+  const updateSubtaskNote = async (taskId: string, subtaskId: string, note: string) => {
+    let updatedSubtaskObj: any = null;
+
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id === taskId) {
           const trimmed = note.trim();
+
+          if (task.isDelegated) {
+            const completions = [...(task.userCompletions || [])];
+            let userComp = completions.find((c) => c.userId === currentUser.id);
+            if (!userComp) {
+              userComp = {
+                userId: currentUser.id,
+                userName: currentUser.name,
+                avatar: currentUser.avatar,
+                completed: false,
+                completedSubtaskIds: [],
+                completedCount: 0,
+                subtaskNotes: { [subtaskId]: trimmed },
+                updatedAt: new Date().toISOString(),
+              };
+              completions.push(userComp);
+            } else {
+              const idx = completions.findIndex((c) => c.userId === currentUser.id);
+              userComp = { 
+                ...userComp, 
+                subtaskNotes: { 
+                  ...(userComp.subtaskNotes || {}), 
+                  [subtaskId]: trimmed 
+                },
+                updatedAt: new Date().toISOString()
+              };
+              completions[idx] = userComp;
+            }
+
+            // If it's a checkbox_note, also mark it as completed for this user if note is provided
+            const subtask = task.subtasks.find(st => st.id === subtaskId);
+            if (subtask?.type === 'checkbox_note' && trimmed.length > 0) {
+              if (!userComp.completedSubtaskIds.includes(subtaskId)) {
+                userComp.completedSubtaskIds = [...userComp.completedSubtaskIds, subtaskId];
+                
+                // Check if now fully completed
+                const allSubtaskIds = task.subtasks.map((st) => st.id);
+                const isFullyCompleted = allSubtaskIds.length > 0 && allSubtaskIds.every((id) => userComp.completedSubtaskIds.includes(id));
+                userComp.completed = isFullyCompleted;
+              }
+            }
+
+            return { ...task, userCompletions: completions };
+          }
+
           const updatedSubtasks = task.subtasks.map((st) => {
             if (st.id === subtaskId) {
               const isCompleted = st.type === 'checkbox_note' ? trimmed.length > 0 : st.completed;
-              return {
+              updatedSubtaskObj = {
                 ...st,
                 completionNote: trimmed || undefined,
                 completed: isCompleted,
               };
+              return updatedSubtaskObj;
             }
             return st;
           });
@@ -1642,19 +2198,112 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return task;
       })
     );
+
+    const token = localStorage.getItem('lingkar_auth_token');
+    try {
+      const task = tasks.find(t => t.id === taskId);
+      if (task?.isDelegated) {
+        const subtask = task.subtasks.find(st => st.id === subtaskId);
+        const shouldComplete = subtask?.type === 'checkbox_note' && note.trim().length > 0;
+        
+        await fetch(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            completionNote: note.trim(),
+            completed: shouldComplete ? true : undefined
+          }),
+        });
+      } else if (updatedSubtaskObj) {
+        await fetch(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            completionNote: updatedSubtaskObj.completionNote || '',
+            completed: updatedSubtaskObj.completed,
+          }),
+        });
+      }
+    } catch (e) {}
   };
 
   const updateTaskStatus = async (taskId: string, status: TaskStatus) => {
     const isDone = status === 'done';
+    
+    // Validate required notes for delegated tasks
+    if (isDone) {
+      const targetTask = tasks.find((t) => t.id === taskId);
+      if (targetTask && targetTask.isDelegated && targetTask.subtasks) {
+        const requiredSubtasks = targetTask.subtasks.filter((st) => st.type === 'checkbox_note');
+        const userComp = targetTask.userCompletions?.find((c) => c.userId === currentUser.id);
+        
+        const uncompletedRequired = requiredSubtasks.filter(
+          (st) => !userComp?.completedSubtaskIds?.includes(st.id)
+        );
+
+        if (uncompletedRequired.length > 0) {
+          alert(`Anda belum mengisi keterangan wajib untuk ${uncompletedRequired.length} sub-tahap.`);
+          return;
+        }
+      }
+    }
+
     const nowFormatted = new Date().toLocaleDateString('id-ID', {
       day: 'numeric',
       month: 'short',
       year: 'numeric',
     });
 
+    let isDelegatedTask = false;
+
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id === taskId) {
+          if (task.isDelegated) {
+            isDelegatedTask = true;
+            const completions = [...(task.userCompletions || [])];
+            let userComp = completions.find((c) => c.userId === currentUser.id);
+            if (!userComp) {
+              userComp = {
+                userId: currentUser.id,
+                userName: currentUser.name,
+                avatar: currentUser.avatar,
+                completed: false,
+                completedSubtaskIds: [],
+                completedCount: 0,
+                updatedAt: new Date().toISOString(),
+              };
+              completions.push(userComp);
+            } else {
+              userComp = { ...userComp };
+              const idx = completions.indexOf(completions.find((c) => c.userId === currentUser.id)!);
+              completions[idx] = userComp;
+            }
+
+            const nextCompleted = !userComp.completed;
+            userComp.completed = nextCompleted;
+            userComp.updatedAt = new Date().toISOString();
+
+            if (nextCompleted) {
+              triggerCelebration();
+              addPoints(task.pointsReward, `Menyelesaikan tugas bersama: "${task.title}"`);
+            } else {
+              playSoundEffect('click');
+              addPoints(-task.pointsReward, `Membatalkan penyelesaian tugas bersama: "${task.title}"`);
+            }
+
+            return {
+              ...task,
+              userCompletions: completions,
+            };
+          }
+
           if (isDone && task.status !== 'done') {
             triggerCelebration();
             addPoints(task.pointsReward, `Menyelesaikan tugas: "${task.title}"`);
@@ -1688,17 +2337,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const token = localStorage.getItem('lingkar_auth_token');
     try {
-      await fetch(`/api/tasks/${taskId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          status,
-          progress: isDone ? 100 : 25,
-        }),
-      });
+      if (isDelegatedTask) {
+        await fetch(`/api/tasks/${taskId}/toggle`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+      } else {
+        await fetch(`/api/tasks/${taskId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            status,
+            progress: isDone ? 100 : 25,
+          }),
+        });
+      }
     } catch (e) {}
   };
 
@@ -1808,20 +2467,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  const updateSubtask = (
+  const updateSubtask = async (
     taskId: string,
     subtaskId: string,
     subtaskData: Partial<Subtask>
   ) => {
+    let targetSubtask: any = null;
+
     setTasks((prev) =>
       prev.map((task) => {
         if (task.id === taskId) {
           const updatedSubtasks = task.subtasks.map((st) => {
             if (st.id === subtaskId) {
-              return {
+              targetSubtask = {
                 ...st,
                 ...subtaskData,
               };
+              return targetSubtask;
             }
             return st;
           });
@@ -1837,6 +2499,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
     playSoundEffect('click');
+
+    const token = localStorage.getItem('lingkar_auth_token');
+    try {
+      if (targetSubtask) {
+        await fetch(`/api/tasks/${taskId}/subtasks/${subtaskId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(subtaskData),
+        });
+      }
+    } catch (e) {}
   };
 
   const deleteTask = async (taskId: string) => {
@@ -2035,61 +2711,102 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return newCircleId;
   };
 
-  const addMemberToCircle = (
+  const addMemberToCircle = async (
     circleId: string,
     member: { id: string; name: string; avatar: string; role?: CircleMember['role'] }
   ) => {
-    const today = new Date().toISOString().split('T')[0];
-    setCircles((prev) =>
-      prev.map((c) => {
-        if (c.id === circleId) {
-          const exists = c.members.some((m) => m.id === member.id);
-          if (exists) return c;
-          const newMember: CircleMember = {
-            id: member.id,
-            name: member.name,
-            avatar: member.avatar,
-            role: member.role || 'Anggota',
-            joinedAt: today,
-            contributionPoints: 300,
-          };
-          return {
-            ...c,
-            members: [...c.members, newMember],
-          };
-        }
-        return c;
-      })
-    );
-    playSoundEffect('click');
-    addNotification({
-      title: 'Anggota Baru Bergabung',
-      message: `${member.name} telah ditambahkan ke dalam grup.`,
-      type: 'system',
-      linkTab: 'groups',
-    });
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      const res = await fetch(`/api/circles/${circleId}/members`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          userId: member.id,
+          role: member.role || 'Anggota',
+          name: member.name,
+          avatar: member.avatar
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP error ${res.status}`);
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+      setCircles((prev) =>
+        prev.map((c) => {
+          if (c.id === circleId) {
+            const exists = c.members.some((m) => m.id === member.id);
+            if (exists) return c;
+            const newMember: CircleMember = {
+              id: member.id,
+              name: member.name,
+              avatar: member.avatar,
+              role: member.role || 'Anggota',
+              joinedAt: today,
+              contributionPoints: 300,
+            };
+            return {
+              ...c,
+              members: [...c.members, newMember],
+              memberCount: (c.members || []).length + 1
+            };
+          }
+          return c;
+        })
+      );
+      playSoundEffect('click');
+      addNotification({
+        title: 'Anggota Baru Bergabung',
+        message: `${member.name} telah ditambahkan ke dalam grup.`,
+        type: 'system',
+        linkTab: 'groups',
+      });
+      return { success: true };
+    } catch (err: any) {
+      console.error('Failed to add member to circle in backend', err);
+      return { success: false, error: err.message };
+    }
   };
 
-  const updateMemberRole = (
+  const updateMemberRole = async (
     circleId: string,
     memberId: string,
     newRole: CircleMember['role']
   ) => {
-    setCircles((prev) =>
-      prev.map((c) => {
-        if (c.id === circleId) {
-          return {
-            ...c,
-            members: c.members.map((m) =>
-              m.id === memberId ? { ...m, role: newRole } : m
-            ),
-          };
-        }
-        return c;
-      })
-    );
-    playSoundEffect('click');
-    addPoints(10, `Memperbarui peran anggota menjadi ${newRole}`);
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      await fetch(`/api/circles/${circleId}/members/${memberId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ role: newRole })
+      });
+
+      setCircles((prev) =>
+        prev.map((c) => {
+          if (c.id === circleId) {
+            return {
+              ...c,
+              members: c.members.map((m) =>
+                m.id === memberId ? { ...m, role: newRole } : m
+              ),
+            };
+          }
+          return c;
+        })
+      );
+      playSoundEffect('click');
+      addPoints(10, `Memperbarui peran anggota menjadi ${newRole}`);
+    } catch (err) {
+      console.error('Failed to update member role in backend', err);
+    }
   };
 
     const updateCircle = async (circleId: string, data: Partial<Pick<Circle, 'name' | 'description' | 'category' | 'avatar' | 'bannerGradient' | 'tags' | 'isPrivate' | 'meetingSchedule'>>) => {
@@ -2116,19 +2833,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const removeMemberFromCircle = (circleId: string, memberId: string) => {
-    setCircles((prev) =>
-      prev.map((c) => {
-        if (c.id === circleId) {
-          return {
-            ...c,
-            members: c.members.filter((m) => m.id !== memberId),
-          };
+  const removeMemberFromCircle = async (circleId: string, memberId: string) => {
+    try {
+      const token = localStorage.getItem('lingkar_auth_token');
+      await fetch(`/api/circles/${circleId}/members/${memberId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
         }
-        return c;
-      })
-    );
-    playSoundEffect('click');
+      });
+
+      setCircles((prev) =>
+        prev.map((c) => {
+          if (c.id === circleId) {
+            const updatedMembers = c.members.filter((m) => m.id !== memberId);
+            return {
+              ...c,
+              members: updatedMembers,
+              memberCount: updatedMembers.length
+            };
+          }
+          return c;
+        })
+      );
+      playSoundEffect('click');
+    } catch (err) {
+      console.error('Failed to remove member from circle in backend', err);
+    }
   };
 
   const deleteCircle = async (circleId: string) => {
@@ -2190,13 +2921,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       await fetch(`/api/circles/${circleId}/leave`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ userId: currentUser.id }),
       });
     } catch (e) {}
   };
 
   const joinCircleByCode = async (code: string): Promise<{ success: boolean; message: string }> => {
-    const cleanCode = code.trim().toUpperCase();
+    let cleanCode = code.trim();
+    if (cleanCode.includes('#join/')) {
+      cleanCode = cleanCode.split('#join/')[1] || cleanCode;
+    } else if (cleanCode.includes('join=')) {
+      cleanCode = cleanCode.split('join=')[1] || cleanCode;
+    } else if (cleanCode.includes('/#join/')) {
+      cleanCode = cleanCode.split('/#join/')[1] || cleanCode;
+    }
+    cleanCode = cleanCode.split('?')[0].split('&')[0].split('#')[0].trim().toUpperCase();
     const token = localStorage.getItem('lingkar_auth_token');
 
     try {
@@ -2206,7 +2949,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ code: cleanCode }),
+        body: JSON.stringify({
+          code: cleanCode,
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userAvatar: currentUser.avatar,
+          userTitle: currentUser.roleTitle,
+        }),
       });
 
       const data = await res.json();
@@ -2221,12 +2970,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           return [data.circle, ...prev];
         });
 
-        setCurrentUser((prev) => ({
-          ...prev,
-          joinedCircleIds: Array.from(new Set([...prev.joinedCircleIds, data.circle.id])),
-        }));
+        setCurrentUser((prev) => {
+          const updatedJoined = Array.from(new Set([...(prev.joinedCircleIds || []), data.circle.id]));
+          const updatedUser = {
+            ...prev,
+            joinedCircleIds: updatedJoined,
+          };
+          localStorage.setItem('lingkar_user', JSON.stringify(updatedUser));
+          return updatedUser;
+        });
 
         setActiveCircleId(data.circle.id);
+        openGroupRoom(data.circle.id);
         triggerCelebration();
         addPoints(50, `Bergabung ke dalam ${data.circle.name}`);
         return { success: true, message: `Berhasil bergabung dengan ${data.circle.name}!` };
@@ -2401,6 +3156,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notifications,
         meetings,
         allUsers,
+        leaderboard,
+        isInitialLoading,
         searchQuery,
         activeTab,
         selectedGroupForRoom,
@@ -2412,6 +3169,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isRefreshingData,
         appConfig,
         refreshData,
+        refreshLeaderboard,
         fetchAppConfig,
         updateAppConfig,
         updateUserProfile,
@@ -2473,6 +3231,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         markAllNotificationsRead,
         markNotificationRead,
         addNotification,
+        postCategories,
+        fetchPostCategories,
+        createPostCategory,
+        updatePostCategory,
+        deletePostCategory,
+        feedbacks,
+        fetchFeedbacks,
+        submitFeedback,
+        updateFeedbackStatus,
+        deleteFeedback,
       }}
     >
       {children}

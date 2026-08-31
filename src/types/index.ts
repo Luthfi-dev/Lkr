@@ -18,12 +18,55 @@ export type CircleCategory =
   | 'Support Group'
   | 'Komunitas Kebaikan';
 
-export type PostCategory = 
-  | 'Rangkuman Buku'
-  | 'Wawasan & Artikel'
-  | 'Materi Keilmuan'
-  | 'Catatan Diskusi'
-  | 'Misi Kebaikan';
+export type PostCategory = string;
+
+export interface PostCategoryItem {
+  id: string;
+  name: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  isDefault?: boolean;
+  sortOrder?: number;
+  postCount?: number;
+  createdAt?: string;
+}
+
+export type FeedbackCategory =
+  | 'Saran Fitur'
+  | 'Laporan Bug'
+  | 'Laporan Kendala (Bug)'
+  | 'Kritik & Masukan'
+  | 'Desain & Tampilan'
+  | 'Desain & Tampilan (UI/UX)'
+  | 'Performa & Kecepatan'
+  | 'Ide Komunitas'
+  | 'Lainnya';
+
+export type FeedbackStatus =
+  | 'pending'
+  | 'reviewed'
+  | 'in_progress'
+  | 'implemented'
+  | 'resolved'
+  | 'rejected';
+
+export interface FeedbackItem {
+  id: string;
+  userId?: string;
+  userName: string;
+  userEmail?: string;
+  userAvatar?: string;
+  category: FeedbackCategory;
+  title: string;
+  message: string;
+  rating?: number;
+  status: FeedbackStatus;
+  adminNotes?: string;
+  respondedBy?: string;
+  respondedAt?: string;
+  createdAt: string;
+}
 
 export type TransactionType = 'income' | 'expense' | 'dues';
 
@@ -104,6 +147,17 @@ export interface TaskAssignee {
   avatar: string;
 }
 
+export interface UserCompletion {
+  userId: string;
+  userName: string;
+  avatar: string;
+  completed: boolean;
+  completedSubtaskIds: string[];
+  completedCount: number;
+  subtaskNotes?: Record<string, string>; // Map of subtaskId -> note
+  updatedAt: string;
+}
+
 export interface PostAttachment {
   id: string;
   name: string;
@@ -155,6 +209,8 @@ export interface Task {
   recurrenceTime?: string; // e.g. "08:00 WIB"
   streakDays?: number; // for daily/recurring tasks
   isGroupGoal?: boolean; // collaborative goal for all members
+  isDelegated?: boolean; // delegated per member (independent completion)
+  userCompletions?: UserCompletion[]; // completions tracking per member
   collaborativeNotes?: string;
   syncedCalendars?: ('google' | 'outlook' | 'ics')[];
   calendarSyncedAt?: string;
@@ -307,5 +363,20 @@ export interface MeetingAgenda {
   type: 'Diskusi Rutin' | 'Evaluasi Kas' | 'Review Modul' | 'Briefing Aksi' | 'Koordinasi Tim';
   description?: string;
   status?: 'upcoming' | 'completed';
+}
+
+export interface LeaderboardMember {
+  rank: number;
+  id: string;
+  name: string;
+  username: string;
+  email?: string;
+  avatar: string;
+  title: string;
+  contributionPoints: number;
+  level: number;
+  streakDays: number;
+  badgesCount: number;
+  role: string;
 }
 

@@ -40,17 +40,30 @@ export const SubtaskItem: React.FC<SubtaskItemProps> = ({
     claimSubtask 
   } = useApp();
 
+  const subtaskType = subtask.type || 'checkbox';
+  const userComp = task.userCompletions?.find((c) => c.userId === currentUser.id);
+  const isCompleted = task.isDelegated
+    ? (userComp?.completedSubtaskIds?.includes(subtask.id) || false)
+    : (subtask.completed || (subtaskType === 'number_input' && (Number(subtask.currentValue) || 0) >= (Number(subtask.targetValue) || 1)) || (subtaskType === 'select_option' && (subtask.selectedOption === 'Selesai' || subtask.selectedOption === 'Tuntas' || subtask.selectedOption === 'Tuntas Selesai')));
+
+  const currentUserNote = (task.isDelegated ? userComp?.subtaskNotes?.[subtask.id] : subtask.completionNote) || '';
+
   const [isNoteInputOpen, setIsNoteInputOpen] = useState(false);
-  const [noteText, setNoteText] = useState(subtask.completionNote || '');
+  const [noteText, setNoteText] = useState(currentUserNote);
   const [noteError, setNoteError] = useState('');
   const [isAssigneePickerOpen, setIsAssigneePickerOpen] = useState(false);
   const [isOptionPickerOpen, setIsOptionPickerOpen] = useState(false);
 
+  // Sync noteText when component re-renders with new data
+  React.useEffect(() => {
+    if (!isNoteInputOpen) {
+      setNoteText(currentUserNote);
+    }
+  }, [currentUserNote, isNoteInputOpen]);
+
   // Circle members for subtask delegation
   const circle = circles.find((c) => c.id === task.circleId) || circles[0];
   const members: CircleMember[] = circle ? circle.members : [];
-
-  const subtaskType = subtask.type || 'checkbox';
 
   // Handle Note Submit
   const handleSaveNote = (e?: React.FormEvent) => {
@@ -69,9 +82,9 @@ export const SubtaskItem: React.FC<SubtaskItemProps> = ({
   const handleCheckboxClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (subtaskType === 'checkbox_note') {
-      if (!subtask.completed) {
+      if (!isCompleted) {
         // Strict: Cannot complete without note! Open input form directly
-        setNoteText(subtask.completionNote || '');
+        setNoteText(currentUserNote);
         setNoteError('');
         setIsNoteInputOpen(true);
         return;
@@ -111,8 +124,9 @@ export const SubtaskItem: React.FC<SubtaskItemProps> = ({
     setIsOptionPickerOpen(false);
   };
 
-  const isCompleted = subtask.completed || (subtaskType === 'number_input' && currentVal >= targetVal) || (subtaskType === 'select_option' && (activeOption === 'Selesai' || activeOption === 'Tuntas' || activeOption === 'Tuntas Selesai'));
-
+  // Note Display if exists
+  const displayNote = currentUserNote;
+  
   return (
     <div 
       className={`rounded-2xl border transition-all space-y-2 p-2.5 sm:p-3 relative ${
@@ -182,7 +196,7 @@ export const SubtaskItem: React.FC<SubtaskItemProps> = ({
             </div>
 
             {/* Hint for mandatory note when not completed */}
-            {subtaskType === 'checkbox_note' && !subtask.completed && !subtask.completionNote && !isNoteInputOpen && (
+            {subtaskType === 'checkbox_note' && !isCompleted && !displayNote && !isNoteInputOpen && (
               <p 
                 onClick={handleCheckboxClick}
                 className="mt-0.5 text-[10px] text-indigo-700 hover:text-indigo-900 font-medium cursor-pointer flex items-center gap-1"
@@ -195,23 +209,23 @@ export const SubtaskItem: React.FC<SubtaskItemProps> = ({
             )}
 
             {/* Note Display if exists */}
-            {subtask.completionNote && (
+            {displayNote && (
               <div className="mt-2 p-2.5 rounded-xl bg-teal-50/90 border border-teal-200/80 flex items-start justify-between gap-2 text-xs text-teal-950 shadow-2xs">
                 <div className="flex items-start gap-2 min-w-0 flex-1">
                   <FileText className="w-4 h-4 text-teal-700 shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <span className="text-[10px] font-bold text-teal-800 uppercase tracking-wider block mb-0.5">
-                      Catatan / Bukti:
+                      Catatan / Bukti {task.isDelegated ? '(Anda)' : ''}:
                     </span>
                     <p className="break-words leading-relaxed text-slate-800 font-medium">
-                      {subtask.completionNote}
+                      {displayNote}
                     </p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    setNoteText(subtask.completionNote || '');
+                    setNoteText(displayNote);
                     setNoteError('');
                     setIsNoteInputOpen(true);
                   }}

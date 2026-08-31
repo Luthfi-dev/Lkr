@@ -54,6 +54,9 @@ export const ThreadedCommentList: React.FC<ThreadedCommentListProps> = ({
   // Displayed replies count map
   const [displayedRepliesCount, setDisplayedRepliesCount] = useState<{ [commentId: string]: number }>({});
 
+  // Pagination for main comments
+  const [displayedCommentsCount, setDisplayedCommentsCount] = useState(5);
+
   const toggleThreadCollapse = (commentId: string) => {
     setCollapsedThreads((prev) => ({ ...prev, [commentId]: !prev[commentId] }));
   };
@@ -118,7 +121,6 @@ export const ThreadedCommentList: React.FC<ThreadedCommentListProps> = ({
     setReplyAttachments([]);
   };
 
-  const [displayedCommentsCount, setDisplayedCommentsCount] = useState(5);
   const visibleComments = comments.slice(0, displayedCommentsCount);
   const hasMoreComments = comments.length > displayedCommentsCount;
 

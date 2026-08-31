@@ -31,9 +31,14 @@ import {
   Repeat,
   Search,
   X,
-  Settings
+  Settings,
+  Link as LinkIcon,
+  Info,
+  Camera
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { copyToClipboard } from '../utils/clipboard';
+import { uploadMediaFile } from '../utils/imageOptimizer';
 import { Circle, CircleMember, Task, Priority, TaskStatus, Subtask, SubtaskType, TaskFrequency } from '../types';
 import { PostCard } from './PostCard';
 import { QuickPostComposer } from './QuickPostComposer';
@@ -85,19 +90,60 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
     removeMemberFromCircle,
     leaveCircle,
     completeRecurringTask,
+    updateCircle,
     addTransaction,
     toggleMemberDue,
     addPoints,
     triggerCelebration,
     allUsers,
+    refreshData,
+    isInitialLoading,
+    isRefreshingData
   } = useApp();
 
-  const availableUsers = allUsers.length > 0 ? allUsers : [currentUser];
+  const availableUsers = React.useMemo(() => {
+    const rawList = allUsers.length > 0 ? allUsers : [currentUser];
+    return rawList.filter((u) => {
+      if (!u) return false;
+      const sysRole = String(u.systemRole || (u as any).sysRole || '').toLowerCase();
+      const userRole = String(u.role || '').toLowerCase();
+      const userName = String(u.name || '').toLowerCase();
+      const userEmail = String(u.email || '').toLowerCase();
+      const userUsername = String(u.username || '').toLowerCase();
+
+      // Superadmin and Admin accounts MUST NOT appear in the user search or member lists
+      if (sysRole === 'superadmin' || sysRole === 'admin') return false;
+      if (userRole === 'admin' || userRole === 'superadmin' || userRole.includes('admin')) return false;
+      if (userUsername === 'admin' || userUsername === 'superadmin' || userUsername.includes('admin')) return false;
+      if (userName.includes('admin') || userEmail.includes('admin')) return false;
+      return true;
+    });
+  }, [allUsers, currentUser]);
 
   const circle = circles.find((c) => c.id === circleId);
 
+  const [isUploadingGroupAvatar, setIsUploadingGroupAvatar] = useState(false);
+  const groupAvatarInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleGroupAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !circle) return;
+    try {
+      setIsUploadingGroupAvatar(true);
+      const res = await uploadMediaFile(file);
+      await updateCircle(circle.id, { avatar: res.url });
+      triggerCelebration();
+    } catch (err) {
+      console.error('Failed to upload group avatar', err);
+    } finally {
+      setIsUploadingGroupAvatar(false);
+    }
+  };
+
   const [activeSubTab, setActiveSubTab] = useState<'tasks' | 'evaluasi' | 'members' | 'finance' | 'discussions' | 'settings'>('tasks');
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [isGroupInfoModalOpen, setIsGroupInfoModalOpen] = useState(false);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   const [isCreateTaskModalOpen, setIsCreateTaskModalOpen] = useState(false);
   const [isAddTxModalOpen, setIsAddTxModalOpen] = useState(false);
@@ -113,18 +159,13 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
   const [groupTxPage, setGroupTxPage] = useState(1);
   const [groupPostPage, setGroupPostPage] = useState(1);
 
-  React.useEffect(() => {
-    setGroupTaskPage(1);
-    setGroupTxPage(1);
-    setGroupPostPage(1);
-  }, [activeSubTab, taskFilter]);
-
   // New Task Form State
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskDeadline, setNewTaskDeadline] = useState('3 Hari Kedepan');
   const [newTaskPriority, setNewTaskPriority] = useState<Priority>('Medium');
   const [newTaskCategory, setNewTaskCategory] = useState('Target Bersama');
+  const [newTaskIsDelegated, setNewTaskIsDelegated] = useState(false);
   const [newTaskFrequency, setNewTaskFrequency] = useState<TaskFrequency>('once');
   const [newTaskRecurrenceDays, setNewTaskRecurrenceDays] = useState<number[]>([1, 3]);
   const [newTaskRecurrenceTime, setNewTaskRecurrenceTime] = useState('08:00 WIB');
@@ -155,12 +196,27 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
   const [selectedRoleForNewMembers, setSelectedRoleForNewMembers] = useState<CircleMember['role']>('Anggota');
 
   React.useEffect(() => {
-    if (!circle) {
+    setGroupTaskPage(1);
+    setGroupTxPage(1);
+    setGroupPostPage(1);
+  }, [activeSubTab, taskFilter]);
+
+  React.useEffect(() => {
+    if (!circle && !isInitialLoading && !isRefreshingData) {
       onBack();
     }
-  }, [circle, onBack]);
+  }, [circle, isInitialLoading, isRefreshingData, onBack]);
 
   if (!circle) {
+    if (isInitialLoading || isRefreshingData) {
+      return (
+        <div className="w-full space-y-4 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-xs h-64 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-teal-600 animate-spin"></div>
+          </div>
+        </div>
+      );
+    }
     return null;
   }
 
@@ -216,13 +272,35 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
 
   // Group roles identification
   const myMembership = circle.members.find((m) => m.id === currentUser.id);
-  const isAdmin = myMembership?.role === 'Ketua' || myMembership?.role === 'Kreator' || !myMembership;
+  const isAdmin = currentUser.systemRole === 'superadmin' || currentUser.systemRole === 'admin' || myMembership?.role === 'Ketua' || myMembership?.role === 'Kreator';
   const treasurer = circle.members.find((m) => m.role === 'Bendahara');
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(circle.code);
+    copyToClipboard(circle.code);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleCopyLink = () => {
+    if (typeof window !== 'undefined' && circle) {
+      const joinLink = `${window.location.origin}/#join/${circle.code}`;
+      if (navigator.share) {
+        navigator
+          .share({
+            title: `Bergabung ke grup ${circle.name}`,
+            text: `Halo, mari bergabung ke grup "${circle.name}" di Lingkar! Kode Undangan: ${circle.code}`,
+            url: joinLink,
+          })
+          .catch(() => {
+            copyToClipboard(joinLink);
+          });
+      } else {
+        copyToClipboard(joinLink);
+      }
+      setCopiedLink(true);
+      triggerCelebration();
+      setTimeout(() => setCopiedLink(false), 2500);
+    }
   };
 
   const handleCreateGroupTask = (e: React.FormEvent) => {
@@ -256,11 +334,13 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
         options: st.options,
       })),
       assignees: assigneesList.length > 0 ? assigneesList : [{ id: currentUser.id, name: currentUser.name, avatar: currentUser.avatar }],
+      isDelegated: newTaskIsDelegated,
     });
 
     setIsCreateTaskModalOpen(false);
     setNewTaskTitle('');
     setNewTaskDesc('');
+    setNewTaskIsDelegated(false);
     setNewTaskFrequency('once');
     setNewTaskSubtasks([]);
   };
@@ -295,11 +375,11 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
     setNewTaskSubtasks((prev) => prev.filter((st) => st.id !== id));
   };
 
-  const handleAddMembersSubmit = () => {
-    selectedDirectoryUsers.forEach((userId) => {
+  const handleAddMembersSubmit = async () => {
+    const promises = selectedDirectoryUsers.map(async (userId) => {
       const userToAdd = availableUsers.find((u) => u.id === userId);
       if (userToAdd) {
-        addMemberToCircle(circle.id, {
+        return addMemberToCircle(circle.id, {
           id: userToAdd.id,
           name: userToAdd.name,
           avatar: userToAdd.avatar,
@@ -307,6 +387,8 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
         });
       }
     });
+    await Promise.all(promises);
+    await refreshData();
     setSelectedDirectoryUsers([]);
     setIsAddMemberModalOpen(false);
   };
@@ -335,180 +417,145 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
 
   return (
     <div className="space-y-4 pb-12 animate-in fade-in duration-200">
-      {/* Clean, Spacious Group Room Header */}
-      <div className="bg-white rounded-3xl p-4 sm:p-6 border border-slate-200/80 shadow-xs space-y-4">
-        {/* Back and Header Actions Row */}
-        <div className="flex items-center justify-between gap-2 pb-3.5 border-b border-slate-100 flex-wrap">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-teal-700 px-3 py-1.5 rounded-xl hover:bg-slate-100 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span>Kembali ke Daftar Grup</span>
-          </button>
-
-          <div className="flex items-center gap-2 flex-wrap">
+      {/* WhatsApp-Style Compact Group Room Header */}
+      <div className="bg-white rounded-2xl p-3 sm:p-4 border border-slate-200/80 shadow-xs space-y-3">
+        {/* Top Header Row */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            {/* Back Button */}
             <button
-              onClick={handleCopyCode}
-              title="Salin Kode Undangan Grup"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-50 text-teal-800 rounded-xl text-xs font-bold border border-teal-200/70 hover:bg-teal-100 transition-colors"
+              onClick={onBack}
+              title="Kembali ke Daftar Grup"
+              className="p-2 text-slate-700 hover:text-teal-700 hover:bg-slate-100 rounded-xl transition-colors shrink-0 cursor-pointer"
             >
-              {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-teal-700" />}
-              <span>Kode: {circle.code}</span>
+              <ArrowLeft className="w-5 h-5" />
             </button>
 
+            {/* Clickable Group Profile Header (Opens WhatsApp-Style Info Modal) */}
             <button
-              onClick={() => setIsAddMemberModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors shadow-2xs"
+              onClick={() => setIsGroupInfoModalOpen(true)}
+              className="flex items-center gap-2.5 min-w-0 text-left hover:opacity-85 transition-opacity group cursor-pointer"
             >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Tambah Anggota</span>
-            </button>
-
-            {myMembership?.role === 'Ketua' && (
-              <button
-                onClick={() => setActiveSubTab('settings')}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200 transition-colors shadow-2xs"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Pengaturan</span>
-              </button>
-            )}
-
-            {/* Leave Group Action Button */}
-            <button
-              onClick={() => {
-                if (myMembership?.role === 'Ketua' && circle.members.length > 1) {
-                  const otherAdmins = circle.members.filter((m) => m.role === 'Ketua' && m.id !== currentUser.id);
-                  if (otherAdmins.length === 0) {
-                    alert('Anda adalah satu-satunya Ketua (Admin) di grup ini. Silakan serahkan peran Ketua ke anggota lain atau hapus grup jika ingin keluar.');
-                    return;
-                  }
-                }
-                setIsLeaveGroupModalOpen(true);
-              }}
-              title="Keluar dari grup ini"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200/70 rounded-xl text-xs font-bold hover:bg-rose-100 hover:text-rose-800 transition-colors"
-            >
-              <LogOut className="w-3.5 h-3.5 text-rose-600" />
-              <span className="hidden sm:inline">Keluar Grup</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Group Identity Card */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
-          <div className="flex items-start gap-4">
-            <div className="relative flex-shrink-0">
-              <img
-                src={circle.avatar}
-                alt={circle.name}
-                referrerPolicy="no-referrer"
-                className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover ring-4 ring-slate-50 shadow-sm"
-              />
-              <span className="absolute -bottom-1 -right-1 px-2 py-0.5 bg-teal-600 text-white rounded-full text-[10px] font-extrabold shadow-xs">
-                {circle.members.length} Anggota
-              </span>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                  {circle.name}
-                </h1>
-                <span className="px-2.5 py-0.5 text-[11px] font-bold rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                  {circle.category}
+              <div className="relative shrink-0">
+                <img
+                  src={circle.avatar}
+                  alt={circle.name}
+                  referrerPolicy="no-referrer"
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl object-cover ring-2 ring-teal-50 shadow-2xs"
+                />
+                <span className="absolute -bottom-1 -right-1 px-1.5 py-0.2 bg-teal-600 text-white rounded-full text-[9px] font-extrabold shadow-2xs">
+                  {circle.members.length}
                 </span>
-                {myMembership && (
-                  <span className="px-2.5 py-0.5 text-[11px] font-extrabold rounded-full bg-teal-50 text-teal-800 border border-teal-200">
-                    Peran: {myMembership.role}
+              </div>
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <h1 className="text-sm sm:text-base font-extrabold text-slate-900 tracking-tight truncate group-hover:text-teal-700 transition-colors">
+                    {circle.name}
+                  </h1>
+                  <Info className="w-4 h-4 text-teal-600 shrink-0" />
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium truncate">
+                  <span className="px-1.5 py-0.2 rounded bg-slate-100 text-slate-700 font-bold text-[10px] shrink-0">
+                    {circle.category}
                   </span>
-                )}
+                  <span>•</span>
+                  <span className="text-teal-700 font-bold truncate">Info & Pengaturan</span>
+                </div>
               </div>
+            </button>
+          </div>
 
-              <p className="text-xs sm:text-sm text-slate-600 line-clamp-2 leading-relaxed max-w-2xl">
-                {circle.description}
-              </p>
+          {/* Right Quick Actions (Share Link & Info Button) */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={handleCopyLink}
+              title="Bagikan Link Undangan Grup"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+            >
+              {copiedLink ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-white" />
+                  <span className="hidden sm:inline">Link Tersalin</span>
+                </>
+              ) : (
+                <>
+                  <Share2 className="w-3.5 h-3.5 text-white" />
+                  <span className="hidden sm:inline">Bagikan</span>
+                </>
+              )}
+            </button>
 
-              {/* Group Quick Stats Pill Row */}
-              <div className="flex items-center gap-2 sm:gap-3 pt-1 text-xs text-slate-500 font-medium flex-wrap">
-                <span className="flex items-center gap-1.5 text-teal-900 bg-teal-50/80 px-2.5 py-1 rounded-xl border border-teal-100 font-bold">
-                  <Wallet className="w-3.5 h-3.5 text-teal-600" />
-                  Kas: Rp {circle.kasBalance.toLocaleString('id-ID')}
-                </span>
-                <span className="flex items-center gap-1.5 text-amber-900 bg-amber-50/80 px-2.5 py-1 rounded-xl border border-amber-100 font-bold">
-                  <CheckSquare className="w-3.5 h-3.5 text-amber-600" />
-                  {groupTasks.filter((t) => t.status !== 'done').length} Tugas Aktif
-                </span>
-                <span className="flex items-center gap-1.5 text-indigo-900 bg-indigo-50/80 px-2.5 py-1 rounded-xl border border-indigo-100 font-bold">
-                  <Calendar className="w-3.5 h-3.5 text-indigo-600" />
-                  {circle.meetingSchedule || 'Koordinasi Mingguan'}
-                </span>
-              </div>
-            </div>
+            <button
+              onClick={() => setIsGroupInfoModalOpen(true)}
+              title="Informasi & Pengaturan Grup"
+              className="p-2 text-slate-700 hover:text-teal-700 hover:bg-teal-50 bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            >
+              <Info className="w-5 h-5 text-teal-700" />
+            </button>
           </div>
         </div>
 
-        {/* Navigation Subtabs (5 Subtabs: Tasks | Evaluation & Analytics | Members | Finance | Discussions) */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pt-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/70">
+        {/* 5-Subtab Navigation Bar (Immediately visible & compact right at the top) */}
+        <div className="grid grid-cols-5 gap-1 pt-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200/70 overflow-x-auto">
           <button
             onClick={() => setActiveSubTab('tasks')}
-            className={`flex items-center justify-center gap-2 py-2.5 px-2 rounded-xl text-xs font-bold transition-all ${
+            className={`flex items-center justify-center gap-1 py-2 px-1 rounded-lg text-xs font-bold transition-all ${
               activeSubTab === 'tasks'
                 ? 'bg-white text-teal-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <CheckSquare className="w-4 h-4 text-teal-600" />
-            <span>Tugas Tim ({groupTasks.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('evaluasi')}
-            className={`flex items-center justify-center gap-2 py-2.5 px-2 rounded-xl text-xs font-bold transition-all ${
-              activeSubTab === 'evaluasi'
-                ? 'bg-white text-teal-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4 text-indigo-600" />
-            <span>Grafik & Evaluasi</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('members')}
-            className={`flex items-center justify-center gap-2 py-2.5 px-2 rounded-xl text-xs font-bold transition-all ${
-              activeSubTab === 'members'
-                ? 'bg-white text-teal-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Users className="w-4 h-4 text-sky-600" />
-            <span>Anggota ({circle.members.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('finance')}
-            className={`flex items-center justify-center gap-2 py-2.5 px-2 rounded-xl text-xs font-bold transition-all ${
-              activeSubTab === 'finance'
-                ? 'bg-white text-teal-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Wallet className="w-4 h-4 text-emerald-600" />
-            <span>Kas Grup</span>
+            <CheckSquare className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-teal-600 shrink-0" />
+            <span className="truncate">Tugas ({groupTasks.length})</span>
           </button>
 
           <button
             onClick={() => setActiveSubTab('discussions')}
-            className={`flex items-center justify-center gap-2 py-2.5 px-2 rounded-xl text-xs font-bold transition-all col-span-2 sm:col-span-1 ${
+            className={`flex items-center justify-center gap-1 py-2 px-1 rounded-lg text-xs font-bold transition-all ${
               activeSubTab === 'discussions'
                 ? 'bg-white text-teal-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <BookOpen className="w-4 h-4 text-amber-600" />
-            <span>Diskusi ({groupPosts.length})</span>
+            <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 shrink-0" />
+            <span className="truncate">Diskusi ({groupPosts.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('finance')}
+            className={`flex items-center justify-center gap-1 py-2 px-1 rounded-lg text-xs font-bold transition-all ${
+              activeSubTab === 'finance'
+                ? 'bg-white text-teal-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 shrink-0" />
+            <span className="truncate">Kas</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('members')}
+            className={`flex items-center justify-center gap-1 py-2 px-1 rounded-lg text-xs font-bold transition-all ${
+              activeSubTab === 'members'
+                ? 'bg-white text-teal-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-600 shrink-0" />
+            <span className="truncate">Anggota ({circle.members.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('evaluasi')}
+            className={`flex items-center justify-center gap-1 py-2 px-1 rounded-lg text-xs font-bold transition-all ${
+              activeSubTab === 'evaluasi'
+                ? 'bg-white text-teal-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600 shrink-0" />
+            <span className="truncate">Grafik</span>
           </button>
         </div>
       </div>
@@ -561,13 +608,15 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
               </button>
             </div>
 
-            <button
-              onClick={() => setIsCreateTaskModalOpen(true)}
-              className="flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 transition-colors shadow-xs"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Tambah Tugas Grup</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setIsCreateTaskModalOpen(true)}
+                className="flex items-center justify-center gap-1.5 px-3.5 py-1.5 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 transition-colors shadow-xs"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Tugas Grup</span>
+              </button>
+            )}
           </div>
 
           {/* Task Cards List */}
@@ -578,12 +627,14 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
               <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto mb-4">
                 Buat tugas bersama dan delegasikan kepada anggota grup untuk mulai berkolaborasi.
               </p>
-              <button
-                onClick={() => setIsCreateTaskModalOpen(true)}
-                className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 shadow-xs"
-              >
-                + Buat Tugas Pertama di Grup Ini
-              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => setIsCreateTaskModalOpen(true)}
+                  className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 shadow-xs"
+                >
+                  + Buat Tugas Pertama di Grup Ini
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-3">
@@ -591,13 +642,20 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                 .slice(0, groupTaskPage * 5)
                 .map((task) => {
                 const isAssignedToMe = task.assignees.some((a) => a.id === currentUser.id);
-                const isDone = task.status === 'done';
+                const userComp = task.isDelegated ? task.userCompletions?.find(c => c.userId === currentUser.id) : null;
+                const isUserCompleted = task.isDelegated ? (userComp?.completed || false) : task.status === 'done';
+                const completedCount = task.isDelegated
+                  ? (userComp?.completedSubtaskIds?.length || 0)
+                  : (task.subtasks || []).filter((s) => s.completed).length;
+                const progressPercentage = task.isDelegated
+                  ? (task.subtasks?.length > 0 ? Math.round((completedCount / task.subtasks.length) * 100) : (isUserCompleted ? 100 : 0))
+                  : task.progress;
 
                 return (
                   <div
                     key={task.id}
                     className={`bg-white rounded-2xl p-4 border transition-all hover:shadow-sm ${
-                      isDone
+                      isUserCompleted
                         ? 'border-emerald-200/80 bg-emerald-50/20'
                         : 'border-slate-200/80 shadow-xs'
                     }`}
@@ -649,7 +707,19 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        {task.frequency && task.frequency !== 'once' ? (
+                        {task.isDelegated ? (
+                          <button
+                            onClick={() => updateTaskStatus(task.id, isUserCompleted ? 'ongoing' : 'done')}
+                            className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
+                              isUserCompleted
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-100 text-slate-700 hover:bg-teal-50 hover:text-teal-850'
+                            }`}
+                          >
+                            {isUserCompleted ? <CheckCircle2 className="w-3.5 h-3.5" /> : <CircleIcon className="w-3.5 h-3.5" />}
+                            <span>{isUserCompleted ? 'Tuntas (Anda)' : 'Lapor Selesai (Anda)'}</span>
+                          </button>
+                        ) : task.frequency && task.frequency !== 'once' ? (
                           <button
                             onClick={() => completeRecurringTask(task.id)}
                             className="flex items-center gap-1.5 px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs"
@@ -660,15 +730,15 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                           </button>
                         ) : (
                           <button
-                            onClick={() => updateTaskStatus(task.id, isDone ? 'ongoing' : 'done')}
+                            onClick={() => updateTaskStatus(task.id, isUserCompleted ? 'ongoing' : 'done')}
                             className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all ${
-                              isDone
+                              isUserCompleted
                                 ? 'bg-emerald-600 text-white'
                                 : 'bg-slate-100 text-slate-700 hover:bg-teal-50 hover:text-teal-800'
                             }`}
                           >
-                            {isDone ? <CheckCircle2 className="w-3.5 h-3.5" /> : <CircleIcon className="w-3.5 h-3.5" />}
-                            <span>{isDone ? 'Selesai' : 'Tandai Selesai'}</span>
+                            {isUserCompleted ? <CheckCircle2 className="w-3.5 h-3.5" /> : <CircleIcon className="w-3.5 h-3.5" />}
+                            <span>{isUserCompleted ? 'Selesai' : 'Tandai Selesai'}</span>
                           </button>
                         )}
                       </div>
@@ -681,7 +751,7 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                     >
                       <h4
                         className={`text-sm font-bold text-slate-900 group-hover:text-teal-700 transition-colors ${
-                          isDone ? 'line-through text-slate-400' : ''
+                          isUserCompleted ? 'line-through text-slate-400' : ''
                         }`}
                       >
                         {task.title}
@@ -697,13 +767,18 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                     {task.subtasks && task.subtasks.length > 0 && (
                       <div className="mt-3 bg-slate-50 rounded-xl p-2.5 border border-slate-100 space-y-1.5">
                         <div className="flex items-center justify-between text-[11px] text-slate-600 font-semibold mb-1">
-                          <span>Checklist & Tahapan Tugas ({task.subtasks.filter((s) => s.completed).length}/{task.subtasks.length})</span>
-                          <span className="text-teal-700 font-bold">{task.progress}%</span>
+                          <span>
+                            {task.isDelegated
+                              ? `Checklist Tugas Anda (${completedCount}/${task.subtasks.length})`
+                              : `Checklist & Tahapan Tugas (${completedCount}/${task.subtasks.length})`
+                            }
+                          </span>
+                          <span className="text-teal-700 font-bold">{progressPercentage}%</span>
                         </div>
                         <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden mb-2">
                           <div
                             className="bg-teal-600 h-1.5 rounded-full transition-all duration-300"
-                            style={{ width: `${task.progress}%` }}
+                            style={{ width: `${progressPercentage}%` }}
                           />
                         </div>
                         <div className="space-y-1.5 pt-0.5">
@@ -716,6 +791,66 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                               onOpenTaskDetail={onOpenTaskDetail}
                             />
                           ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Group Members Progress Section for Delegated Tasks */}
+                    {task.isDelegated && circle.members && circle.members.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-100/60 bg-slate-50 rounded-xl p-3 space-y-1.5" onClick={e => e.stopPropagation()}>
+                        <div className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                          <span>Laporan Progres Anggota</span>
+                          <span className="text-teal-800 font-extrabold font-mono text-[11px]">
+                            {task.userCompletions?.filter(c => c.completed).length || 0}/{circle.members.length} Tuntas
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto pr-0.5">
+                          {circle.members.map(member => {
+                            const comp = task.userCompletions?.find(c => c.userId === member.id);
+                            const hasCompleted = comp?.completed || false;
+                            const subCount = comp?.completedSubtaskIds?.length || 0;
+                            return (
+                              <div key={member.id} className="flex flex-col gap-1.5 p-1.5 px-2 bg-white rounded-xl border border-slate-200/50 text-[11px]">
+                                <div className="flex items-center justify-between gap-1.5">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <img
+                                      src={member.avatar}
+                                      alt={member.name}
+                                      referrerPolicy="no-referrer"
+                                      className="w-5 h-5 rounded-full object-cover shrink-0 ring-1 ring-slate-100"
+                                    />
+                                    <span className="font-semibold text-slate-800 truncate">
+                                      {member.name.split(' ')[0]} {member.id === currentUser.id ? '(Anda)' : ''}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    {task.subtasks && task.subtasks.length > 0 && (
+                                      <span className="text-[10px] text-slate-400 font-bold font-mono">
+                                        {subCount}/{task.subtasks.length}
+                                      </span>
+                                    )}
+                                    <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-extrabold uppercase ${hasCompleted ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                                      {hasCompleted ? 'Tuntas' : 'Belum'}
+                                    </span>
+                                  </div>
+                                </div>
+                                {comp?.subtaskNotes && Object.entries(comp.subtaskNotes).length > 0 && (
+                                  <div className="mt-1 space-y-1">
+                                    {Object.entries(comp.subtaskNotes).map(([sid, note]) => {
+                                      const st = task.subtasks.find(s => s.id === sid);
+                                      if (!note || !st) return null;
+                                      return (
+                                        <div key={sid} className="p-1.5 bg-slate-50 rounded-lg text-[10px] text-slate-600 italic flex items-start gap-1">
+                                          <span className="font-bold shrink-0">{st.title}:</span>
+                                          <span>"{note}"</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -755,48 +890,52 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                         )}
 
                         {/* Delegate to Other Members Dropdown */}
-                        <div className="relative group/delegate">
-                          <button className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-700 rounded-xl text-[11px] font-semibold hover:bg-slate-200 transition-colors">
-                            <span>Delegasi</span>
-                            <ChevronDown className="w-3 h-3" />
-                          </button>
+                        {isAdmin && (
+                          <div className="relative group/delegate">
+                            <button className="flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-700 rounded-xl text-[11px] font-semibold hover:bg-slate-200 transition-colors">
+                              <span>Delegasi</span>
+                              <ChevronDown className="w-3 h-3" />
+                            </button>
 
-                          <div className="absolute right-0 bottom-full mb-1 hidden group-hover/delegate:block w-48 bg-white rounded-xl shadow-xl border border-slate-100 p-1.5 z-20">
-                            <div className="text-[10px] font-bold text-slate-400 px-2 py-1 uppercase">
-                              Pilih Anggota Tim
+                            <div className="absolute right-0 bottom-full mb-1 hidden group-hover/delegate:block w-48 bg-white rounded-xl shadow-xl border border-slate-100 p-1.5 z-20">
+                              <div className="text-[10px] font-bold text-slate-400 px-2 py-1 uppercase">
+                                Pilih Anggota Tim
+                              </div>
+                              {circle.members.map((m) => (
+                                <button
+                                  key={m.id}
+                                  onClick={() =>
+                                    assignTaskToMember(task.id, {
+                                      id: m.id,
+                                      name: m.name,
+                                      avatar: m.avatar,
+                                    })
+                                  }
+                                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left hover:bg-slate-50 transition-colors"
+                                >
+                                  <img
+                                    src={m.avatar}
+                                    alt={m.name}
+                                    referrerPolicy="no-referrer"
+                                    className="w-5 h-5 rounded-full object-cover"
+                                  />
+                                  <span className="truncate font-medium text-slate-800">{m.name}</span>
+                                </button>
+                              ))}
                             </div>
-                            {circle.members.map((m) => (
-                              <button
-                                key={m.id}
-                                onClick={() =>
-                                  assignTaskToMember(task.id, {
-                                    id: m.id,
-                                    name: m.name,
-                                    avatar: m.avatar,
-                                  })
-                                }
-                                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left hover:bg-slate-50 transition-colors"
-                              >
-                                <img
-                                  src={m.avatar}
-                                  alt={m.name}
-                                  referrerPolicy="no-referrer"
-                                  className="w-5 h-5 rounded-full object-cover"
-                                />
-                                <span className="truncate font-medium text-slate-800">{m.name}</span>
-                              </button>
-                            ))}
                           </div>
-                        </div>
+                        )}
 
-                        <button
-                          type="button"
-                          onClick={() => setTaskToRemove(task)}
-                          className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
-                          title="Hapus Tugas"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => setTaskToRemove(task)}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors"
+                            title="Hapus Tugas"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -845,15 +984,17 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsAddMemberModalOpen(true)}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 transition-colors shadow-xs"
-              >
-                <UserPlus className="w-4 h-4" />
-                <span>Tambah Anggota</span>
-              </button>
-            </div>
+            {isAdmin && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsAddMemberModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 transition-colors shadow-xs"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Tambah Anggota</span>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Members List */}
@@ -913,48 +1054,50 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                   </div>
 
                   {/* Actions & Role Changer */}
-                  <div className="flex items-center gap-2 self-end sm:self-center">
-                    {/* Set as Treasurer quick button if not already */}
-                    {!isTreasurer && (
-                      <button
-                        onClick={() => updateMemberRole(circle.id, member.id, 'Bendahara')}
-                        className="px-2.5 py-1 bg-teal-50 text-teal-800 border border-teal-200/70 rounded-xl text-[11px] font-bold hover:bg-teal-100 transition-colors"
-                        title="Tunjuk anggota ini untuk kelola keuangan grup"
-                      >
-                        Pilih Bendahara
-                      </button>
-                    )}
+                  {isAdmin && (
+                    <div className="flex items-center gap-2 self-end sm:self-center">
+                      {/* Set as Treasurer quick button if not already */}
+                      {!isTreasurer && (
+                        <button
+                          onClick={() => updateMemberRole(circle.id, member.id, 'Bendahara')}
+                          className="px-2.5 py-1 bg-teal-50 text-teal-800 border border-teal-200/70 rounded-xl text-[11px] font-bold hover:bg-teal-100 transition-colors"
+                          title="Tunjuk anggota ini untuk kelola keuangan grup"
+                        >
+                          Pilih Bendahara
+                        </button>
+                      )}
 
-                    {/* Role Dropdown */}
-                    <select
-                      value={member.role}
-                      onChange={(e) =>
-                        updateMemberRole(
-                          circle.id,
-                          member.id,
-                          e.target.value as CircleMember['role']
-                        )
-                      }
-                      className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                    >
-                      <option value="Ketua">Ketua / Admin</option>
-                      <option value="Bendahara">Bendahara (Kas)</option>
-                      <option value="Sekretaris">Sekretaris</option>
-                      <option value="Anggota">Anggota</option>
-                      <option value="Kreator">Kreator</option>
-                    </select>
-
-                    {!isMe && (
-                      <button
-                        type="button"
-                        onClick={() => setMemberToRemove(member)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="Keluarkan dari grup"
+                      {/* Role Dropdown */}
+                      <select
+                        value={member.role}
+                        onChange={(e) =>
+                          updateMemberRole(
+                            circle.id,
+                            member.id,
+                            e.target.value as CircleMember['role']
+                          )
+                        }
+                        className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-teal-500"
                       >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
+                        <option value="Ketua">Ketua / Admin</option>
+                        <option value="Bendahara">Bendahara (Kas)</option>
+                        <option value="Sekretaris">Sekretaris</option>
+                        <option value="Anggota">Anggota</option>
+                        <option value="Kreator">Kreator</option>
+                      </select>
+
+                      {!isMe && (
+                        <button
+                          type="button"
+                          onClick={() => setMemberToRemove(member)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Keluarkan dari grup"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1265,6 +1408,30 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
                     <option value="Low">Rendah (Low)</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Delegated Task Toggle */}
+              <div className="p-3 bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl border border-indigo-200/85 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-800 text-white flex items-center justify-center flex-shrink-0">
+                    <UserCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-indigo-950">Tugas Mandiri Per Anggota Grup</h4>
+                    <p className="text-[11px] text-indigo-700">
+                      Setiap anggota mendapatkan checklist sendiri. Progres dihitung terpisah untuk masing-masing anggota.
+                    </p>
+                  </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={newTaskIsDelegated}
+                    onChange={(e) => setNewTaskIsDelegated(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-10 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-700"></div>
+                </label>
               </div>
 
               {/* Recurrence & Frequency Selection in Group Modal */}
@@ -1709,17 +1876,29 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
 
             <div className="mt-4 space-y-4">
               {/* Share Code Card */}
-              <div className="bg-teal-50/80 p-3 rounded-2xl border border-teal-200/80 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-teal-800">Kode Undangan Grup:</span>
-                  <div className="text-sm font-black text-teal-950 tracking-wider">{circle.code}</div>
+              <div className="bg-teal-50/80 p-3 rounded-2xl border border-teal-200/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] font-bold text-teal-800">Kode Undangan Grup:</span>
+                    <div className="text-sm font-black text-teal-950 tracking-wider">{circle.code}</div>
+                  </div>
+                  <button
+                    onClick={handleCopyCode}
+                    className="px-3 py-1.5 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 shadow-xs"
+                  >
+                    {copiedCode ? 'Tersalin!' : 'Salin Kode'}
+                  </button>
                 </div>
-                <button
-                  onClick={handleCopyCode}
-                  className="px-3 py-1.5 bg-teal-600 text-white rounded-xl text-xs font-bold hover:bg-teal-700 shadow-xs"
-                >
-                  {copiedCode ? 'Tersalin!' : 'Salin Kode'}
-                </button>
+                <div className="border-t border-teal-200/50 pt-3 flex items-center justify-between">
+                  <div className="text-[10px] text-teal-800 font-medium">Atau bagikan link langsung:</div>
+                  <button
+                    onClick={handleCopyLink}
+                    className="px-3 py-1.5 bg-white border border-teal-300 text-teal-800 rounded-xl text-xs font-bold hover:bg-teal-50 shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <LinkIcon className="w-3.5 h-3.5" />
+                    <span>{copiedLink ? 'Link Tersalin!' : 'Salin / Bagikan Link'}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Role default for new additions */}
@@ -1741,62 +1920,105 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
               {/* Contact list picker */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Pilih dari Direktori Teman & Kontak
+                  Cari Anggota (Ketik Username atau Nama)
                 </label>
-                <div className="space-y-2 max-h-56 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-200">
-                  {availableUsers.map((u) => {
-                    const alreadyInGroup = circle.members.some((m) => m.id === u.id);
-                    const isSelected = selectedDirectoryUsers.includes(u.id);
+                <div className="relative mb-3">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Ketik username atau nama anggota (contoh: @budi)..."
+                    value={memberSearch}
+                    onChange={(e) => setMemberSearch(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500 font-medium"
+                  />
+                </div>
+                
+                {memberSearch.trim().length >= 2 ? (
+                  <div className="space-y-2 max-h-56 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-200">
+                    {availableUsers
+                      .filter((u) => {
+                        const q = memberSearch.trim().toLowerCase();
+                        const nameMatch = u.name.toLowerCase().includes(q);
+                        const usernameMatch = u.username ? u.username.toLowerCase().includes(q) : false;
+                        const emailMatch = u.email ? u.email.toLowerCase().includes(q) : false;
+                        return nameMatch || usernameMatch || emailMatch;
+                      })
+                      .map((u: any) => {
+                      const alreadyInGroup = circle.members.some((m) => m.id === u.id);
+                      const isSelected = selectedDirectoryUsers.includes(u.id);
 
-                    return (
-                      <div
-                        key={u.id}
-                        onClick={() => {
-                          if (alreadyInGroup) return;
-                          if (isSelected) {
-                            setSelectedDirectoryUsers(selectedDirectoryUsers.filter((id) => id !== u.id));
-                          } else {
-                            setSelectedDirectoryUsers([...selectedDirectoryUsers, u.id]);
-                          }
-                        }}
-                        className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
-                          alreadyInGroup
-                            ? 'opacity-50 bg-slate-100 border-slate-200 cursor-not-allowed'
-                            : isSelected
-                            ? 'bg-teal-50 border-teal-400 shadow-xs cursor-pointer'
-                            : 'bg-white border-slate-200 hover:border-slate-300 cursor-pointer'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <img
-                            src={u.avatar}
-                            alt={u.name}
-                            referrerPolicy="no-referrer"
-                            className="w-8 h-8 rounded-full object-cover"
-                          />
+                      return (
+                        <div
+                          key={u.id}
+                          onClick={() => {
+                            if (alreadyInGroup) return;
+                            if (isSelected) {
+                              setSelectedDirectoryUsers(selectedDirectoryUsers.filter((id) => id !== u.id));
+                            } else {
+                              setSelectedDirectoryUsers([...selectedDirectoryUsers, u.id]);
+                            }
+                          }}
+                          className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
+                            alreadyInGroup
+                              ? 'opacity-50 bg-slate-100 border-slate-200 cursor-not-allowed'
+                              : isSelected
+                              ? 'bg-teal-50 border-teal-400 shadow-xs cursor-pointer'
+                              : 'bg-white border-slate-200 hover:border-slate-300 cursor-pointer'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <img
+                              src={u.avatar}
+                              alt={u.name}
+                              referrerPolicy="no-referrer"
+                              className="w-8 h-8 rounded-full object-cover"
+                            />
+                            <div>
+                              <div className="text-xs font-bold text-slate-900">{u.name}</div>
+                              <div className="text-[10px] text-slate-500">{u.username ? `@${u.username}` : ''} • {u.roleTitle || 'Anggota'}</div>
+                            </div>
+                          </div>
+
                           <div>
-                            <div className="text-xs font-bold text-slate-900">{u.name}</div>
-                            <div className="text-[10px] text-slate-500">{u.username} • {u.roleTitle}</div>
+                            {alreadyInGroup ? (
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
+                                Sudah Bergabung
+                              </span>
+                            ) : isSelected ? (
+                              <div className="w-5 h-5 rounded-full bg-teal-600 text-white flex items-center justify-center">
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </div>
+                            ) : (
+                              <div className="w-5 h-5 rounded-full border-2 border-slate-300" />
+                            )}
                           </div>
                         </div>
-
-                        <div>
-                          {alreadyInGroup ? (
-                            <span className="text-[10px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full">
-                              Sudah Bergabung
-                            </span>
-                          ) : isSelected ? (
-                            <div className="w-5 h-5 rounded-full bg-teal-600 text-white flex items-center justify-center">
-                              <Check className="w-3 h-3 stroke-[3]" />
-                            </div>
-                          ) : (
-                            <div className="w-5 h-5 rounded-full border-2 border-slate-300" />
-                          )}
+                      );
+                    })}
+                    {availableUsers.filter((u) => {
+                        const q = memberSearch.trim().toLowerCase();
+                        const nameMatch = u.name.toLowerCase().includes(q);
+                        const usernameMatch = u.username ? u.username.toLowerCase().includes(q) : false;
+                        const emailMatch = u.email ? u.email.toLowerCase().includes(q) : false;
+                        return nameMatch || usernameMatch || emailMatch;
+                      }).length === 0 && (
+                        <div className="text-center py-5 space-y-1">
+                          <p className="text-xs font-bold text-slate-700">Pengguna tidak ditemukan</p>
+                          <p className="text-[11px] text-slate-500">
+                            Pengguna tidak ditemukan atau sudah bergabung dalam grup ini.
+                          </p>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      )}
+                  </div>
+                ) : (
+                  <div className="text-center p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
+                    <Search className="w-6 h-6 text-slate-300 mx-auto mb-1" />
+                    <p className="text-xs font-bold text-slate-700">Ketik Username Anggota</p>
+                    <p className="text-[11px] text-slate-500 max-w-[240px] mx-auto leading-relaxed">
+                      Ketik nama atau username anggota (min. 2 karakter) untuk mencari anggota baru.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
@@ -1969,6 +2191,257 @@ export const GroupDetailRoom: React.FC<GroupDetailRoomProps> = ({
         }}
         onCancel={() => setTaskToRemove(null)}
       />
+
+      {/* ===================== MODAL INFO & PENGATURAN GRUP (WHATSAPP STYLE) ===================== */}
+      {isGroupInfoModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 w-full max-w-lg shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto space-y-5">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center font-bold">
+                  <Info className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">Informasi & Pengaturan Grup</h3>
+                  <p className="text-xs text-slate-500">{circle.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsGroupInfoModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Group Hero Profile Card */}
+            <div className="text-center space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200/70">
+              <div className="relative w-20 h-20 mx-auto group">
+                <img
+                  src={circle.avatar}
+                  alt={circle.name}
+                  referrerPolicy="no-referrer"
+                  className="w-20 h-20 rounded-2xl object-cover ring-4 ring-white shadow-sm"
+                />
+                {myMembership?.role === 'Ketua' && (
+                  <>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      ref={groupAvatarInputRef}
+                      onChange={handleGroupAvatarUpload}
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingGroupAvatar}
+                      onClick={() => groupAvatarInputRef.current?.click()}
+                      className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white"
+                      title="Ubah Foto Profil Grup"
+                    >
+                      {isUploadingGroupAvatar ? (
+                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <Camera className="w-5 h-5" />
+                      )}
+                    </button>
+                  </>
+                )}
+              </div>
+              
+              {myMembership?.role === 'Ketua' && (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    disabled={isUploadingGroupAvatar}
+                    onClick={() => groupAvatarInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-700 bg-white hover:bg-teal-50 px-2.5 py-1 rounded-lg border border-slate-200 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Camera className="w-3 h-3 text-teal-600" />
+                    {isUploadingGroupAvatar ? 'Mengunggah...' : 'Ubah Foto Profil'}
+                  </button>
+                </div>
+              )}
+
+              <div>
+                <h2 className="text-lg font-black text-slate-900">{circle.name}</h2>
+                <div className="flex items-center justify-center gap-2 mt-1 flex-wrap">
+                  <span className="px-2.5 py-0.5 text-[11px] font-bold rounded-full bg-slate-200 text-slate-700">
+                    {circle.category}
+                  </span>
+                  {myMembership && (
+                    <span className="px-2.5 py-0.5 text-[11px] font-extrabold rounded-full bg-teal-100 text-teal-800">
+                      Peran Anda: {myMembership.role}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {circle.description && (
+                <p className="text-xs text-slate-600 leading-relaxed px-2">
+                  {circle.description}
+                </p>
+              )}
+            </div>
+
+            {/* Quick Action Grid (WhatsApp Style) */}
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                onClick={() => {
+                  handleCopyLink();
+                }}
+                className="flex items-center gap-2.5 p-3 rounded-2xl bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200/80 font-bold text-xs transition-colors cursor-pointer text-left"
+              >
+                <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                  <Share2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="font-black">Bagikan Link</div>
+                  <div className="text-[10px] text-emerald-700 font-medium">Undang via URL</div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  handleCopyCode();
+                }}
+                className="flex items-center gap-2.5 p-3 rounded-2xl bg-teal-50 hover:bg-teal-100 text-teal-900 border border-teal-200/80 font-bold text-xs transition-colors cursor-pointer text-left"
+              >
+                <div className="w-8 h-8 rounded-xl bg-teal-700 text-white flex items-center justify-center shrink-0">
+                  <Copy className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="font-black">Kode Undangan</div>
+                  <div className="text-[10px] text-teal-700 font-mono font-bold">{circle.code}</div>
+                </div>
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsGroupInfoModalOpen(false);
+                  setIsAddMemberModalOpen(true);
+                }}
+                disabled={!isAdmin}
+                className={`flex items-center gap-2.5 p-3 rounded-2xl border font-bold text-xs transition-colors cursor-pointer text-left w-full ${
+                  isAdmin 
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-900 border-slate-200' 
+                    : 'bg-slate-50 text-slate-400 border-slate-100 opacity-60 cursor-not-allowed'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${isAdmin ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="font-black">Tambah Anggota</div>
+                  <div className="text-[10px] text-slate-500 font-medium">
+                    {isAdmin ? 'Cari dari direktori' : 'Hanya Admin/Ketua'}
+                  </div>
+                </div>
+              </button>
+
+              {isAdmin && (
+                <button
+                  onClick={() => {
+                    setIsGroupInfoModalOpen(false);
+                    setActiveSubTab('settings');
+                  }}
+                  className="flex items-center gap-2.5 p-3 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-200 font-bold text-xs transition-colors cursor-pointer text-left"
+                >
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                    <Settings className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="font-black">Pengaturan Grup</div>
+                    <div className="text-[10px] text-indigo-700 font-medium">Kelola profil & akses</div>
+                  </div>
+                </button>
+              )}
+            </div>
+
+            {/* Group Key Information Stats */}
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ringkasan Grup</h4>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/70 text-center">
+                  <Wallet className="w-4 h-4 text-teal-600 mx-auto mb-1" />
+                  <div className="text-[10px] text-slate-500 font-medium">Kas Grup</div>
+                  <div className="text-xs font-black text-slate-900">Rp {circle.kasBalance.toLocaleString('id-ID')}</div>
+                </div>
+
+                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/70 text-center">
+                  <CheckSquare className="w-4 h-4 text-amber-600 mx-auto mb-1" />
+                  <div className="text-[10px] text-slate-500 font-medium">Tugas Aktif</div>
+                  <div className="text-xs font-black text-slate-900">
+                    {groupTasks.filter((t) => t.status !== 'done').length} Tugas
+                  </div>
+                </div>
+
+                <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/70 text-center">
+                  <Calendar className="w-4 h-4 text-indigo-600 mx-auto mb-1" />
+                  <div className="text-[10px] text-slate-500 font-medium">Jadwal Rutin</div>
+                  <div className="text-xs font-black text-slate-900 truncate">
+                    {circle.meetingSchedule || 'Mingguan'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Members Section Preview */}
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Anggota Grup ({circle.members.length})
+                </h4>
+                <button
+                  onClick={() => {
+                    setIsGroupInfoModalOpen(false);
+                    setActiveSubTab('members');
+                  }}
+                  className="text-xs font-bold text-teal-700 hover:underline"
+                >
+                  Lihat Semua
+                </button>
+              </div>
+
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {circle.members.map((m) => (
+                  <div key={m.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-50 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img src={m.avatar} alt={m.name} className="w-7 h-7 rounded-lg object-cover" />
+                      <span className="font-bold text-slate-800 truncate">{m.name}</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-slate-600 border border-slate-200 shrink-0">
+                      {m.role}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Leave Group Button at Bottom */}
+            <div className="pt-3 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  if (myMembership?.role === 'Ketua' && circle.members.length > 1) {
+                    const otherAdmins = circle.members.filter((m) => m.role === 'Ketua' && m.id !== currentUser.id);
+                    if (otherAdmins.length === 0) {
+                      alert('Anda adalah satu-satunya Ketua (Admin) di grup ini. Silakan serahkan peran Ketua ke anggota lain atau hapus grup jika ingin keluar.');
+                      return;
+                    }
+                  }
+                  setIsGroupInfoModalOpen(false);
+                  setIsLeaveGroupModalOpen(true);
+                }}
+                className="w-full py-2.5 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <LogOut className="w-4 h-4 text-rose-600" />
+                <span>Keluar dari Grup Ini</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal for Leaving Group */}
       <ConfirmationModal

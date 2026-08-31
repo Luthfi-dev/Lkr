@@ -33,19 +33,66 @@ import {
   Building2,
   Phone,
   ExternalLink,
+  Tag,
+  FolderPlus,
+  Edit3,
+  Star,
+  MessageSquarePlus,
+  Filter,
+  Mail,
+  Calendar,
+  Plus,
+  HelpCircle,
+  Bug,
+  Lightbulb,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { AppConfig, SystemMetrics } from '../types';
+import { copyToClipboard } from '../utils/clipboard';
+import { AppConfig, SystemMetrics, PostCategoryItem, FeedbackItem, FeedbackStatus } from '../types';
 import { uploadMediaFile } from '../utils/imageOptimizer';
 
 export const AdminDashboardView: React.FC = () => {
-  const { currentUser, circles, tasks, transactions, appConfig, updateAppConfig } = useApp();
+  const {
+    currentUser,
+    circles,
+    tasks,
+    transactions,
+    appConfig,
+    updateAppConfig,
+    postCategories,
+    createPostCategory,
+    updatePostCategory,
+    deletePostCategory,
+    feedbacks,
+    updateFeedbackStatus,
+    deleteFeedback,
+  } = useApp();
   const isSuperadmin = currentUser.systemRole === 'superadmin';
   const isAdminOrSuper = currentUser.systemRole === 'superadmin' || currentUser.systemRole === 'admin';
 
-  const [activeTab, setActiveTab] = useState<'monitoring' | 'appConfig' | 'sqlMigration' | 'users'>(() => {
-    return currentUser.systemRole === 'admin' ? 'users' : 'monitoring';
+  const [activeTab, setActiveTab] = useState<'monitoring' | 'appConfig' | 'categories' | 'feedbacks' | 'sqlMigration' | 'users'>(() => {
+    return currentUser.systemRole === 'admin' ? 'categories' : 'monitoring';
   });
+
+  // Category Management State
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<PostCategoryItem | null>(null);
+  const [catName, setCatName] = useState('');
+  const [catDescription, setCatDescription] = useState('');
+  const [catIcon, setCatIcon] = useState('Tag');
+  const [catColor, setCatColor] = useState('teal');
+  const [catIsDefault, setCatIsDefault] = useState(false);
+  const [catSortOrder, setCatSortOrder] = useState(0);
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
+  const [categoryMsg, setCategoryMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Feedback Inbox State
+  const [feedbackStatusFilter, setFeedbackStatusFilter] = useState<'all' | FeedbackStatus>('all');
+  const [feedbackSearch, setFeedbackSearch] = useState('');
+  const [selectedFeedback, setSelectedFeedback] = useState<FeedbackItem | null>(null);
+  const [adminReplyNotes, setAdminReplyNotes] = useState('');
+  const [isUpdatingFeedback, setIsUpdatingFeedback] = useState(false);
+  const [feedbackActionMsg, setFeedbackActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Metrics State
   const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
@@ -237,7 +284,7 @@ export const AdminDashboardView: React.FC = () => {
   };
 
   const handleCopySql = () => {
-    navigator.clipboard.writeText(sqlScript);
+    copyToClipboard(sqlScript);
     setCopiedSql(true);
     setTimeout(() => setCopiedSql(false), 2500);
   };
@@ -336,6 +383,155 @@ export const AdminDashboardView: React.FC = () => {
     }
   };
 
+  const handleOpenAddCategory = () => {
+    setEditingCategory(null);
+    setCatName('');
+    setCatDescription('');
+    setCatIcon('Tag');
+    setCatColor('teal');
+    setCatIsDefault(false);
+    setCatSortOrder(postCategories.length);
+    setCategoryMsg(null);
+    setIsCategoryModalOpen(true);
+  };
+
+  const handleOpenEditCategory = (cat: PostCategoryItem) => {
+    setEditingCategory(cat);
+    setCatName(cat.name);
+    setCatDescription(cat.description || '');
+    setCatIcon(cat.icon || 'Tag');
+    setCatColor(cat.color || 'teal');
+    setCatIsDefault(!!cat.isDefault);
+    setCatSortOrder(cat.sortOrder || 0);
+    setCategoryMsg(null);
+    setIsCategoryModalOpen(true);
+  };
+
+  const handleSaveCategorySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!catName.trim()) {
+      setCategoryMsg({ type: 'error', text: 'Nama kategori wajib diisi.' });
+      return;
+    }
+
+    setIsSavingCategory(true);
+    setCategoryMsg(null);
+
+    try {
+      if (editingCategory) {
+        const res = await updatePostCategory(editingCategory.id, {
+          name: catName.trim(),
+          description: catDescription.trim(),
+          icon: catIcon,
+          color: catColor,
+          isDefault: catIsDefault,
+          sortOrder: Number(catSortOrder) || 0,
+        });
+        if (res.success) {
+          setCategoryMsg({ type: 'success', text: res.message || 'Kategori berhasil diperbarui!' });
+          setTimeout(() => {
+            setIsCategoryModalOpen(false);
+            setCategoryMsg(null);
+          }, 1200);
+        } else {
+          setCategoryMsg({ type: 'error', text: res.error || 'Gagal memperbarui kategori.' });
+        }
+      } else {
+        const res = await createPostCategory({
+          name: catName.trim(),
+          description: catDescription.trim(),
+          icon: catIcon,
+          color: catColor,
+          isDefault: catIsDefault,
+          sortOrder: Number(catSortOrder) || 0,
+        });
+        if (res.success) {
+          setCategoryMsg({ type: 'success', text: res.message || 'Kategori baru berhasil dibuat!' });
+          setTimeout(() => {
+            setIsCategoryModalOpen(false);
+            setCategoryMsg(null);
+          }, 1200);
+        } else {
+          setCategoryMsg({ type: 'error', text: res.error || 'Gagal membuat kategori.' });
+        }
+      }
+    } catch (err: any) {
+      setCategoryMsg({ type: 'error', text: err.message || 'Terjadi kesalahan sistem.' });
+    } finally {
+      setIsSavingCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = async (cat: PostCategoryItem) => {
+    if (cat.isDefault) {
+      alert('Kategori default ("Umum") tidak dapat dihapus karena dibutuhkan sebagai fallback postingan.');
+      return;
+    }
+    if (!window.confirm(`Yakin ingin menghapus kategori "${cat.name}"? Postingan dalam kategori ini akan otomatis dialihkan ke kategori default.`)) {
+      return;
+    }
+
+    const res = await deletePostCategory(cat.id);
+    if (res.success) {
+      setCategoryMsg({ type: 'success', text: res.message || 'Kategori berhasil dihapus.' });
+      setTimeout(() => setCategoryMsg(null), 3000);
+    } else {
+      setCategoryMsg({ type: 'error', text: res.error || 'Gagal menghapus kategori.' });
+    }
+  };
+
+  const handleUpdateFeedbackStatus = async (id: string, status: FeedbackStatus) => {
+    try {
+      setIsUpdatingFeedback(true);
+      setFeedbackActionMsg(null);
+      const res = await updateFeedbackStatus(id, status, adminReplyNotes.trim() || undefined);
+      if (res.success) {
+        setFeedbackActionMsg({ type: 'success', text: 'Status masukan berhasil diperbarui!' });
+        if (selectedFeedback && selectedFeedback.id === id) {
+          setSelectedFeedback({
+            ...selectedFeedback,
+            status,
+            adminNotes: adminReplyNotes.trim() || selectedFeedback.adminNotes,
+            respondedBy: currentUser.name,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        setTimeout(() => setFeedbackActionMsg(null), 3000);
+      } else {
+        setFeedbackActionMsg({ type: 'error', text: res.error || 'Gagal memperbarui status.' });
+      }
+    } catch (err: any) {
+      setFeedbackActionMsg({ type: 'error', text: err.message || 'Terjadi kesalahan sistem.' });
+    } finally {
+      setIsUpdatingFeedback(false);
+    }
+  };
+
+  const handleDeleteFeedback = async (id: string) => {
+    if (!window.confirm('Yakin ingin menghapus masukan ini dari database?')) return;
+    const res = await deleteFeedback(id);
+    if (res.success) {
+      if (selectedFeedback?.id === id) {
+        setSelectedFeedback(null);
+      }
+      setFeedbackActionMsg({ type: 'success', text: 'Masukan berhasil dihapus dari database.' });
+      setTimeout(() => setFeedbackActionMsg(null), 3000);
+    } else {
+      setFeedbackActionMsg({ type: 'error', text: res.error || 'Gagal menghapus masukan.' });
+    }
+  };
+
+  const filteredFeedbacks = feedbacks.filter((fb) => {
+    const matchesStatus = feedbackStatusFilter === 'all' || fb.status === feedbackStatusFilter;
+    const matchesSearch =
+      feedbackSearch.trim() === '' ||
+      fb.title.toLowerCase().includes(feedbackSearch.toLowerCase()) ||
+      fb.message.toLowerCase().includes(feedbackSearch.toLowerCase()) ||
+      fb.userName.toLowerCase().includes(feedbackSearch.toLowerCase()) ||
+      fb.category.toLowerCase().includes(feedbackSearch.toLowerCase());
+    return matchesStatus && matchesSearch;
+  });
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* Header Banner */}
@@ -365,7 +561,7 @@ export const AdminDashboardView: React.FC = () => {
               Pusat Kendali & Pemantauan Sistem
             </h1>
             <p className="text-slate-300 text-xs sm:text-sm mt-1 max-w-2xl leading-relaxed">
-              Monitoring memori realtime, manajemen informasi aplikasi, audit log keamanan, dan ekspor skema SQL siap migrasi database online.
+              Monitoring memori realtime, pengelolaan kategori postingan, kotak saran & masukan pengguna, audit pengguna, dan ekspor skema SQL database.
             </p>
           </div>
 
@@ -383,55 +579,86 @@ export const AdminDashboardView: React.FC = () => {
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200 no-scrollbar">
         <button
           onClick={() => setActiveTab('monitoring')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'monitoring'
               ? 'bg-teal-900 text-white shadow-2xs'
               : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
           }`}
         >
           <Activity className="w-4 h-4 text-emerald-400" />
-          <span>Pemantauan Memori & Server</span>
+          <span>Pemantauan Server</span>
+        </button>
+
+        {/* Tab Kelola Kategori Postingan */}
+        <button
+          onClick={() => setActiveTab('categories')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+            activeTab === 'categories'
+              ? 'bg-teal-900 text-white shadow-2xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
+          }`}
+        >
+          <Tag className="w-4 h-4 text-teal-400" />
+          <span>Kategori Postingan ({postCategories.length})</span>
+        </button>
+
+        {/* Tab Saran & Masukan Pengguna */}
+        <button
+          onClick={() => setActiveTab('feedbacks')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer relative ${
+            activeTab === 'feedbacks'
+              ? 'bg-teal-900 text-white shadow-2xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
+          }`}
+        >
+          <MessageSquarePlus className="w-4 h-4 text-amber-400" />
+          <span>Saran & Masukan Pengguna</span>
+          {feedbacks.filter((f) => f.status === 'pending').length > 0 && (
+            <span className="px-1.5 py-0.2 text-[10px] bg-rose-500 text-white font-bold rounded-full">
+              {feedbacks.filter((f) => f.status === 'pending').length}
+            </span>
+          )}
         </button>
 
         {isSuperadmin && (
           <button
             onClick={() => setActiveTab('appConfig')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
               activeTab === 'appConfig'
                 ? 'bg-teal-900 text-white shadow-2xs'
                 : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
             }`}
           >
             <Sliders className="w-4 h-4 text-amber-400" />
-            <span>Edit Informasi Aplikasi</span>
+            <span>Edit Info Aplikasi</span>
           </button>
         )}
 
         <button
           onClick={() => setActiveTab('sqlMigration')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'sqlMigration'
               ? 'bg-teal-900 text-white shadow-2xs'
               : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
           }`}
         >
           <Database className="w-4 h-4 text-cyan-400" />
-          <span>Salin & Unduh Skema SQL DB Online</span>
+          <span>Skema SQL Database</span>
         </button>
 
         <button
           onClick={() => setActiveTab('users')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
             activeTab === 'users'
               ? 'bg-teal-900 text-white shadow-2xs'
               : 'bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-slate-200'
           }`}
         >
           <Users className="w-4 h-4 text-indigo-400" />
-          <span>Manajemen Pengguna & Peran</span>
+          <span>Pengguna & Peran</span>
         </button>
       </div>
 
@@ -612,6 +839,495 @@ export const AdminDashboardView: React.FC = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: KELOLA KATEGORI POSTINGAN */}
+      {activeTab === 'categories' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-2xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Tag className="w-5 h-5 text-teal-800" />
+                  Pengelolaan Kategori Postingan
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Kelola kategori untuk pengelompokan konten berbagi & inspirasi kebaikan. Kategori 'Umum' disetel sebagai opsi default sistem.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleOpenAddCategory}
+                  className="px-4 py-2.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold flex items-center gap-2 transition-all shadow-2xs cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Tambah Kategori Baru</span>
+                </button>
+              </div>
+            </div>
+
+            {categoryMsg && (
+              <div
+                className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2 animate-in fade-in shadow-2xs ${
+                  categoryMsg.type === 'success'
+                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50 border border-rose-200 text-rose-900'
+                }`}
+              >
+                {categoryMsg.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{categoryMsg.text}</span>
+              </div>
+            )}
+
+            {/* Categories Grid / Table */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {postCategories.map((cat) => (
+                <div
+                  key={cat.id}
+                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 ${
+                    cat.isDefault
+                      ? 'bg-teal-50/50 border-teal-300/80 shadow-2xs'
+                      : 'bg-slate-50/70 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-teal-800 font-bold text-xs shadow-2xs">
+                          <Tag className="w-4 h-4" />
+                        </div>
+                        <span className="font-bold text-sm text-slate-900 truncate">{cat.name}</span>
+                      </div>
+                      {cat.isDefault && (
+                        <span className="px-2 py-0.5 rounded-full bg-teal-800 text-white text-[10px] font-bold shrink-0">
+                          Default Sistem
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+                      {cat.description || 'Tidak ada deskripsi rincian.'}
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-200/60 flex items-center justify-between text-xs">
+                    <span className="text-[11px] font-medium text-slate-400">
+                      Urutan: {cat.sortOrder ?? 0}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditCategory(cat)}
+                        className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-xs font-bold shadow-2xs flex items-center gap-1 cursor-pointer transition-all"
+                      >
+                        <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Edit</span>
+                      </button>
+                      {!cat.isDefault && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCategory(cat)}
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 text-xs font-bold shadow-2xs flex items-center gap-1 cursor-pointer transition-all"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                          <span>Hapus</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Add/Edit Category Modal */}
+          {isCategoryModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95">
+                <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-teal-800 text-white flex items-center justify-center">
+                      <Tag className="w-4 h-4" />
+                    </div>
+                    <h4 className="font-bold text-sm text-slate-900">
+                      {editingCategory ? 'Edit Kategori Postingan' : 'Tambah Kategori Postingan Baru'}
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(false)}
+                    className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-500 transition-colors cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveCategorySubmit} className="p-5 space-y-4">
+                  {categoryMsg && (
+                    <div
+                      className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                        categoryMsg.type === 'success'
+                          ? 'bg-emerald-50 text-emerald-900 border border-emerald-200'
+                          : 'bg-rose-50 text-rose-900 border border-rose-200'
+                      }`}
+                    >
+                      <span>{categoryMsg.text}</span>
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-800 block">
+                      Nama Kategori <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={catName}
+                      onChange={(e) => setCatName(e.target.value)}
+                      placeholder="Contoh: Diskusi Buku, Tips Produktivitas"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white font-medium"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-800 block">Deskripsi Singkat</label>
+                    <textarea
+                      rows={2}
+                      value={catDescription}
+                      onChange={(e) => setCatDescription(e.target.value)}
+                      placeholder="Penjelasan singkat tujuan & jenis postingan pada kategori ini..."
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white font-medium resize-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-800 block">Urutan Tampil (Sort Order)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={catSortOrder}
+                        onChange={(e) => setCatSortOrder(parseInt(e.target.value) || 0)}
+                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white font-medium"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-800 block">Warna Label</label>
+                      <select
+                        value={catColor}
+                        onChange={(e) => setCatColor(e.target.value)}
+                        className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 focus:bg-white font-medium cursor-pointer"
+                      >
+                        <option value="teal">Teal (Hijau Pirus)</option>
+                        <option value="blue">Blue (Biru)</option>
+                        <option value="emerald">Emerald (Hijau Zamrud)</option>
+                        <option value="amber">Amber (Kuning Keemasan)</option>
+                        <option value="purple">Purple (Ungu)</option>
+                        <option value="indigo">Indigo (Nila)</option>
+                        <option value="rose">Rose (Merah Muda)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="pt-1">
+                    <label className="flex items-center gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={catIsDefault}
+                        onChange={(e) => setCatIsDefault(e.target.checked)}
+                        className="w-4 h-4 rounded text-teal-800 focus:ring-teal-700 cursor-pointer"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 block">Jadikan Kategori Default</span>
+                        <span className="text-[10px] text-slate-500">Kategori default otomatis terpilih saat pengguna membuat postingan baru.</span>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setIsCategoryModalOpen(false)}
+                      className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 transition-all cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSavingCategory}
+                      className="px-5 py-2 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                    >
+                      {isSavingCategory ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Menyimpan...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Simpan Kategori</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: KOTAK SARAN & MASUKAN PENGGUNA */}
+      {activeTab === 'feedbacks' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200 shadow-2xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <MessageSquarePlus className="w-5 h-5 text-amber-500" />
+                  Kotak Saran & Masukan Pengguna
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Tinjau aspirasi, kritik membangun, ide fitur, dan laporan kendala dari pengguna aplikasi Lingkar Kebaikan.
+                </p>
+              </div>
+
+              {/* Status Filter & Search */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={feedbackSearch}
+                    onChange={(e) => setFeedbackSearch(e.target.value)}
+                    placeholder="Cari saran..."
+                    className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 font-medium"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Status Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {(
+                [
+                  { id: 'all', label: 'Semua Masukan', count: feedbacks.length },
+                  { id: 'pending', label: 'Menunggu Review', count: feedbacks.filter((f) => f.status === 'pending').length },
+                  { id: 'reviewed', label: 'Ditinjau', count: feedbacks.filter((f) => f.status === 'reviewed').length },
+                  { id: 'in_progress', label: 'Sedang Dikerjakan', count: feedbacks.filter((f) => f.status === 'in_progress').length },
+                  { id: 'resolved', label: 'Selesai / Terwujud', count: feedbacks.filter((f) => f.status === 'resolved').length },
+                  { id: 'rejected', label: 'Ditolak / Arsip', count: feedbacks.filter((f) => f.status === 'rejected').length },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setFeedbackStatusFilter(tab.id as any)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                    feedbackStatusFilter === tab.id
+                      ? 'bg-slate-900 text-white shadow-2xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={`px-1.5 py-0.2 text-[10px] rounded-full font-bold ${
+                      feedbackStatusFilter === tab.id
+                        ? 'bg-white/20 text-white'
+                        : 'bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {feedbackActionMsg && (
+              <div
+                className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2 animate-in fade-in shadow-2xs ${
+                  feedbackActionMsg.type === 'success'
+                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-900'
+                    : 'bg-rose-50 border border-rose-200 text-rose-900'
+                }`}
+              >
+                {feedbackActionMsg.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                )}
+                <span>{feedbackActionMsg.text}</span>
+              </div>
+            )}
+
+            {/* Feedback Cards */}
+            {filteredFeedbacks.length === 0 ? (
+              <div className="py-12 text-center rounded-2xl border border-dashed border-slate-200 space-y-2">
+                <MessageSquarePlus className="w-8 h-8 text-slate-300 mx-auto" />
+                <div className="text-xs font-bold text-slate-700">Belum ada saran atau masukan di kategori ini</div>
+                <div className="text-[11px] text-slate-400">Pengguna dapat mengirim masukan melalui menu Profil Pengguna.</div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredFeedbacks.map((fb) => {
+                  const isSelected = selectedFeedback?.id === fb.id;
+                  const statusColors: Record<FeedbackStatus, { bg: string; text: string; label: string }> = {
+                    pending: { bg: 'bg-amber-50 border-amber-200', text: 'text-amber-800', label: 'Menunggu Review' },
+                    reviewed: { bg: 'bg-blue-50 border-blue-200', text: 'text-blue-800', label: 'Ditinjau' },
+                    in_progress: { bg: 'bg-purple-50 border-purple-200', text: 'text-purple-800', label: 'Sedang Dikerjakan' },
+                    implemented: { bg: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-800', label: 'Sudah Diterapkan' },
+                    resolved: { bg: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-800', label: 'Selesai Terwujud' },
+                    rejected: { bg: 'bg-slate-100 border-slate-200', text: 'text-slate-600', label: 'Ditolak / Arsip' },
+                  };
+                  const currentStatus = statusColors[fb.status] || statusColors.pending;
+
+                  return (
+                    <div
+                      key={fb.id}
+                      className={`p-4 sm:p-5 rounded-2xl border transition-all space-y-3 ${
+                        isSelected
+                          ? 'bg-teal-50/40 border-teal-300 shadow-xs'
+                          : 'bg-slate-50/60 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <img
+                            src={fb.userAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
+                            alt={fb.userName}
+                            referrerPolicy="no-referrer"
+                            className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200"
+                          />
+                          <div>
+                            <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                              <span>{fb.userName}</span>
+                              {fb.userEmail && <span className="text-[10px] text-slate-400 font-normal">({fb.userEmail})</span>}
+                            </div>
+                            <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                              <span className="px-1.5 py-0.2 rounded-md bg-teal-100 text-teal-800 font-bold">
+                                {fb.category}
+                              </span>
+                              <span>•</span>
+                              <span>{new Date(fb.createdAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-auto">
+                          {fb.rating && (
+                            <div className="flex items-center gap-0.5 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
+                              <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                              <span>{fb.rating}/5</span>
+                            </div>
+                          )}
+                          <span className={`px-2.5 py-0.5 rounded-full border text-[11px] font-bold ${currentStatus.bg} ${currentStatus.text}`}>
+                            {currentStatus.label}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-bold text-slate-900">{fb.title}</h4>
+                        <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line bg-white p-3 rounded-xl border border-slate-200/80">
+                          {fb.message}
+                        </p>
+                      </div>
+
+                      {fb.adminNotes && (
+                        <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/70 text-xs text-amber-900 space-y-0.5">
+                          <span className="font-bold text-[10px] uppercase tracking-wider block text-amber-800">
+                            Catatan Tindak Lanjut Admin ({fb.respondedBy || 'Admin'}):
+                          </span>
+                          <p>{fb.adminNotes}</p>
+                        </div>
+                      )}
+
+                      {/* Status Action & Admin Notes Input */}
+                      <div className="pt-2 border-t border-slate-200/70 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-slate-500 font-medium">Ubah Status:</span>
+                          {(['pending', 'reviewed', 'in_progress', 'resolved', 'rejected'] as FeedbackStatus[]).map((st) => (
+                            <button
+                              key={st}
+                              type="button"
+                              disabled={isUpdatingFeedback}
+                              onClick={() => {
+                                handleUpdateFeedbackStatus(fb.id, st);
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                                fb.status === st
+                                  ? 'bg-teal-800 text-white border-teal-800 shadow-2xs'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              {st === 'pending' ? 'Tunda' : st === 'reviewed' ? 'Tinjau' : st === 'in_progress' ? 'Proses' : st === 'resolved' ? 'Selesai' : 'Tolak'}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (selectedFeedback?.id === fb.id) {
+                                setSelectedFeedback(null);
+                              } else {
+                                setSelectedFeedback(fb);
+                                setAdminReplyNotes(fb.adminNotes || '');
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-[11px] font-bold shadow-2xs flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="w-3 h-3 text-slate-500" />
+                            <span>{selectedFeedback?.id === fb.id ? 'Tutup Catatan' : 'Beri Catatan'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteFeedback(fb.id)}
+                            className="p-1.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 shadow-2xs cursor-pointer"
+                            title="Hapus masukan"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Admin Note Box if selected */}
+                      {selectedFeedback?.id === fb.id && (
+                        <div className="pt-2 space-y-2 animate-in fade-in">
+                          <label className="text-[11px] font-bold text-slate-700 block">
+                            Tulis Catatan / Respons Superadmin untuk masukan ini:
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={adminReplyNotes}
+                              onChange={(e) => setAdminReplyNotes(e.target.value)}
+                              placeholder="Contoh: Fitur ini sudah dimasukkan ke dalam roadmap rilis v2.6..."
+                              className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 focus:ring-2 focus:ring-teal-700 font-medium"
+                            />
+                            <button
+                              type="button"
+                              disabled={isUpdatingFeedback}
+                              onClick={() => handleUpdateFeedbackStatus(fb.id, fb.status)}
+                              className="px-3 py-1.5 rounded-xl bg-teal-800 hover:bg-teal-900 text-white text-xs font-bold cursor-pointer transition-all"
+                            >
+                              Simpan Catatan
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

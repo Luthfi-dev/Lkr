@@ -14,10 +14,12 @@ import {
   ChevronRight,
   Gift,
   Medal,
-  Shield
+  Shield,
+  RefreshCw
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Badge } from '../types';
+import { LeaderboardSkeleton } from './SkeletonLoader';
 
 export const LeaderboardView: React.FC = () => {
   const {
@@ -29,10 +31,21 @@ export const LeaderboardView: React.FC = () => {
     isAuthenticated,
     setIsAuthModalOpen,
     setActiveTab,
+    leaderboard,
+    refreshLeaderboard,
+    isInitialLoading,
+    isRefreshingData,
   } = useApp();
 
   const [leaderboardTimeframe, setLeaderboardTimeframe] = useState<'weekly' | 'allTime'>('weekly');
   const [selectedBadge, setSelectedBadge] = useState<Badge | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    await refreshLeaderboard();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
 
   if (!isAuthenticated) {
     return (
@@ -68,35 +81,79 @@ export const LeaderboardView: React.FC = () => {
     );
   }
 
-  // Compile member rankings
-  const allMembers = circles.flatMap((c) => c.members);
-  // Deduplicate members by id
-  const uniqueMembersMap = new Map<string, typeof allMembers[0]>();
-  allMembers.forEach((m) => {
-    if (!uniqueMembersMap.has(m.id)) {
-      uniqueMembersMap.set(m.id, m);
-    }
-  });
+  // Compile member rankings with real database leaderboard preference
+  let sortedMembers: Array<{
+    id: string;
+    name: string;
+    avatar: string;
+    role: string;
+    contributionPoints: number;
+    level?: number;
+    streakDays?: number;
+  }> = [];
 
-  // Include current user in ranking
-  const memberList = Array.from(uniqueMembersMap.values()).map((m) => {
-    if (m.id === currentUser.id) {
+  if (leaderboard && leaderboard.length > 0) {
+    sortedMembers = leaderboard.map((item) => {
+      if (item.id === currentUser.id) {
+        return {
+          id: item.id,
+          name: currentUser.name || item.name,
+          avatar: currentUser.avatar || item.avatar,
+          role: currentUser.title || item.role || 'Anggota',
+          contributionPoints: currentUser.points ?? item.contributionPoints,
+          level: currentUser.level ?? item.level,
+          streakDays: item.streakDays,
+        };
+      }
       return {
-        ...m,
-        contributionPoints: currentUser.points,
+        id: item.id,
+        name: item.name,
+        avatar: item.avatar,
+        role: item.role || item.title || 'Anggota',
+        contributionPoints: item.contributionPoints,
+        level: item.level,
+        streakDays: item.streakDays,
       };
-    }
-    return m;
-  });
+    });
+  } else {
+    // Fallback if leaderboard API is still loading
+    const allMembers = circles.flatMap((c) => c.members);
+    const uniqueMembersMap = new Map<string, typeof allMembers[0]>();
+    allMembers.forEach((m) => {
+      if (!uniqueMembersMap.has(m.id)) {
+        uniqueMembersMap.set(m.id, m);
+      }
+    });
 
-  const sortedMembers = memberList.sort(
-    (a, b) => b.contributionPoints - a.contributionPoints
-  );
+    sortedMembers = Array.from(uniqueMembersMap.values()).map((m) => {
+      if (m.id === currentUser.id) {
+        return {
+          id: m.id,
+          name: currentUser.name,
+          avatar: currentUser.avatar,
+          role: currentUser.title || m.role,
+          contributionPoints: currentUser.points,
+        };
+      }
+      return {
+        id: m.id,
+        name: m.name,
+        avatar: m.avatar,
+        role: m.role,
+        contributionPoints: m.contributionPoints,
+      };
+    });
+  }
+
+  sortedMembers.sort((a, b) => b.contributionPoints - a.contributionPoints);
 
   const top1 = sortedMembers[0];
   const top2 = sortedMembers[1];
   const top3 = sortedMembers[2];
-  const restRankings = sortedMembers.slice(3);
+
+  if (isInitialLoading && sortedMembers.length === 0) {
+    return <LeaderboardSkeleton />;
+  }
 
   const getBadgeIcon = (iconName: string) => {
     switch (iconName) {
@@ -131,13 +188,25 @@ export const LeaderboardView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          onClick={triggerCelebration}
-          className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-2xl bg-amber-100 text-amber-900 text-xs font-bold hover:bg-amber-200 transition-colors"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-          Rayakan!
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-2xl bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition-colors"
+            title="Sinkronkan Poin Real-time"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-slate-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Sinkron</span>
+          </button>
+
+          <button
+            onClick={triggerCelebration}
+            className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-2xl bg-amber-100 text-amber-900 text-xs font-bold hover:bg-amber-200 transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+            Rayakan!
+          </button>
+        </div>
       </div>
 
       {/* Timeframe Switcher */}

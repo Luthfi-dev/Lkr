@@ -30,6 +30,7 @@ import { Task, Circle } from '../types';
 import { StoryReel } from './StoryReel';
 import { isPostVisibleToUser } from '../utils/postPrivacy';
 import { LingkarLogo } from './LingkarLogo';
+import { PostCardSkeleton, TaskCardSkeleton } from './SkeletonLoader';
 
 interface HomeViewProps {
   onOpenTaskDetail: (task: Task) => void;
@@ -37,6 +38,7 @@ interface HomeViewProps {
   onOpenCreatePost: () => void;
   onOpenCreateTransaction: () => void;
   onOpenGroupDetail?: (circle: Circle) => void;
+  onOpenFeedback?: () => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
@@ -45,6 +47,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenCreatePost,
   onOpenCreateTransaction,
   onOpenGroupDetail,
+  onOpenFeedback,
 }) => {
   const {
     currentUser,
@@ -60,6 +63,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
     setActiveTab,
     toggleSubtask,
     searchQuery,
+    isInitialLoading,
+    isRefreshingData,
+    postCategories,
   } = useApp();
 
   const [feedMode, setFeedMode] = useState<'tasks' | 'feed'>('feed');
@@ -243,8 +249,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
 
               {/* Category Filter Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
-                {['all', 'Edukasi', 'Inisiatif', 'Pengumuman', 'Opini'].map((cat) => (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full no-scrollbar">
+                {['all', ...postCategories.map((c) => c.name)].filter((v, i, a) => a.indexOf(v) === i).map((cat) => (
                   <button
                     key={cat}
                     onClick={() => setPublicCategory(cat)}
@@ -262,7 +268,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
             {/* Posts List - Personal without Group labels */}
             <div className="space-y-3">
-              {publicFilteredPosts.length === 0 ? (
+              {(isInitialLoading || (isRefreshingData && posts.length === 0)) ? (
+                <div className="space-y-3">
+                  <PostCardSkeleton />
+                  <PostCardSkeleton />
+                </div>
+              ) : publicFilteredPosts.length === 0 ? (
                 <div className="bg-white rounded-3xl p-8 text-center border border-slate-200/80 shadow-xs space-y-2">
                   <p className="text-xs sm:text-sm text-slate-500 font-medium">
                     Tidak ada postingan dalam kategori ini.
@@ -521,7 +532,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
           {/* Member Content View */}
           {feedMode === 'tasks' ? (
             <div className="space-y-2">
-              {ongoingTasks.length === 0 ? (
+              {(isInitialLoading || (isRefreshingData && tasks.length === 0)) ? (
+                <div className="space-y-2">
+                  <TaskCardSkeleton />
+                  <TaskCardSkeleton />
+                </div>
+              ) : ongoingTasks.length === 0 ? (
                 <div className="bg-white rounded-2xl p-6 text-center border border-slate-100 text-slate-500 text-xs">
                   Tidak ada target tertunda. Semua tugas tuntas!
                 </div>
@@ -584,7 +600,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
           ) : (
             <div className="space-y-2.5">
-              {recentPosts.length === 0 ? (
+              {(isInitialLoading || (isRefreshingData && posts.length === 0)) ? (
+                <div className="space-y-2.5">
+                  <PostCardSkeleton />
+                </div>
+              ) : recentPosts.length === 0 ? (
                 <div className="bg-white rounded-2xl p-6 text-center border border-slate-100 text-slate-500 text-xs">
                   Belum ada postingan terbaru.
                 </div>
@@ -681,6 +701,36 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <span>Peringkat Teladan →</span>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Kotak Saran & Masukan Instan */}
+          <div
+            onClick={() => {
+              if (!isAuthenticated) {
+                setIsAuthModalOpen(true);
+              } else if (onOpenFeedback) {
+                onOpenFeedback();
+              }
+            }}
+            className="p-4 rounded-3xl bg-gradient-to-r from-teal-50 to-teal-100/50 border border-teal-200/60 shadow-2xs hover:shadow-xs transition-all cursor-pointer flex items-center justify-between gap-3 group mt-1"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-teal-800 text-white flex items-center justify-center shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
+                <Info className="w-5 h-5 text-teal-300" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold text-slate-900 leading-snug">
+                  Punya Saran & Masukan?
+                </h4>
+                <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
+                  Kirimkan ide, kritik membangun, atau bug langsung ke tim Superadmin.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 text-teal-800 font-bold text-[11px] shrink-0 bg-white px-2.5 py-1.5 rounded-xl border border-teal-200/40 shadow-3xs group-hover:bg-teal-50 transition-colors">
+              <span>Tulis Saran</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </div>
           </div>
         </>

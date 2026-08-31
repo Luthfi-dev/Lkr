@@ -38,6 +38,7 @@ interface TaskDetailModalProps {
 export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose }) => {
   const {
     tasks,
+    circles,
     currentUser,
     toggleSubtask,
     addSubtaskToTask,
@@ -55,6 +56,11 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose 
 
   // Keep live sync with task state in context
   const currentTask = task ? tasks.find((t) => t.id === task.id) || task : null;
+
+  // Calculate permissions
+  const circle = currentTask ? circles.find(c => c.id === currentTask.circleId) : null;
+  const myMembership = circle?.members.find(m => m.id === currentUser.id);
+  const isAdmin = currentUser.systemRole === 'superadmin' || currentUser.systemRole === 'admin' || myMembership?.role === 'Ketua' || myMembership?.role === 'Kreator';
 
   // New subtask state in modal
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -145,14 +151,16 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose 
 
             {/* Top Right Quick Actions */}
             <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsEditModalOpen(true)}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center shadow-xs transition-transform active:scale-95"
-                title="Edit & Tambah Rincian Tugas"
-              >
-                <Edit3 className="w-4 h-4" />
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 text-white flex items-center justify-center shadow-xs transition-transform active:scale-95"
+                  title="Edit & Tambah Rincian Tugas"
+                >
+                  <Edit3 className="w-4 h-4" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -193,25 +201,29 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose 
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsEditModalOpen(true)}
-                className="px-2.5 py-1 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-[11px] inline-flex items-center gap-1 transition-all active:scale-95 shadow-2xs"
-                title="Edit rincian tugas & checklist"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>Edit Tugas</span>
-              </button>
+              {isAdmin && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditModalOpen(true)}
+                    className="px-2.5 py-1 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-[11px] inline-flex items-center gap-1 transition-all active:scale-95 shadow-2xs"
+                    title="Edit rincian tugas & checklist"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Edit Tugas</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => setIsDelegationModalOpen(true)}
-                className="px-2.5 py-1 rounded-xl bg-white/20 hover:bg-white/30 text-white font-bold text-[11px] inline-flex items-center gap-1 transition-all active:scale-95 border border-white/20"
-                title="Atur penanggung jawab & delegasi tugas"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>Delegasi PIC</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsDelegationModalOpen(true)}
+                    className="px-2.5 py-1 rounded-xl bg-white/20 hover:bg-white/30 text-white font-bold text-[11px] inline-flex items-center gap-1 transition-all active:scale-95 border border-white/20"
+                    title="Atur penanggung jawab & delegasi tugas"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Delegasi PIC</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -337,101 +349,103 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose 
               </div>
 
               {/* Add New Subtask Form */}
-              <form onSubmit={handleAddSubtask} className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200 space-y-2">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                  <span className="text-[11px] font-bold text-slate-700">
-                    + Tambah Tahapan Subtask
-                  </span>
-                  
-                  {/* Subtask Type Selector */}
-                  <div className="flex items-center gap-1 flex-wrap">
-                    {[
-                      { id: 'checkbox', label: '☑️ Centang' },
-                      { id: 'checkbox_note', label: '📝 Wajib Keterangan' },
-                      { id: 'number_input', label: '🔢 Angka' },
-                      { id: 'select_option', label: '📋 Opsi' },
-                    ].map((t) => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        onClick={() => setNewSubtaskType(t.id as SubtaskType)}
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
-                          newSubtaskType === t.id
-                            ? t.id === 'checkbox_note'
-                              ? 'bg-indigo-700 text-white border-indigo-700'
-                              : 'bg-teal-800 text-white border-teal-800'
-                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                        }`}
+              {isAdmin && (
+                <form onSubmit={handleAddSubtask} className="bg-slate-50 p-2.5 rounded-2xl border border-slate-200 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                    <span className="text-[11px] font-bold text-slate-700">
+                      + Tambah Tahapan Subtask
+                    </span>
+                    
+                    {/* Subtask Type Selector */}
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {[
+                        { id: 'checkbox', label: '☑️ Centang' },
+                        { id: 'checkbox_note', label: '📝 Wajib Keterangan' },
+                        { id: 'number_input', label: '🔢 Angka' },
+                        { id: 'select_option', label: '📋 Opsi' },
+                      ].map((t) => (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setNewSubtaskType(t.id as SubtaskType)}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border transition-all ${
+                            newSubtaskType === t.id
+                              ? t.id === 'checkbox_note'
+                                ? 'bg-indigo-700 text-white border-indigo-700'
+                                : 'bg-teal-800 text-white border-teal-800'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Judul tahapan subtask baru..."
+                      value={newSubtaskTitle}
+                      onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={newSubtaskPriority}
+                        onChange={(e) => setNewSubtaskPriority(e.target.value as Priority)}
+                        className="bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-[11px] font-bold text-slate-700 flex-1 sm:flex-none"
                       >
-                        {t.label}
+                        <option value="High">🔴 Tinggi</option>
+                        <option value="Medium">🟡 Sedang</option>
+                        <option value="Low">🟢 Rendah</option>
+                      </select>
+                      <button
+                        type="submit"
+                        className="px-3.5 py-1.5 rounded-xl bg-teal-800 text-white text-xs font-bold hover:bg-teal-900 shadow-2xs transition-all active:scale-95 shrink-0"
+                      >
+                        + Tambah
                       </button>
-                    ))}
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
-                  <input
-                    type="text"
-                    placeholder="Judul tahapan subtask baru..."
-                    value={newSubtaskTitle}
-                    onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                    className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-700"
-                  />
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={newSubtaskPriority}
-                      onChange={(e) => setNewSubtaskPriority(e.target.value as Priority)}
-                      className="bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-[11px] font-bold text-slate-700 flex-1 sm:flex-none"
-                    >
-                      <option value="High">🔴 Tinggi</option>
-                      <option value="Medium">🟡 Sedang</option>
-                      <option value="Low">🟢 Rendah</option>
-                    </select>
-                    <button
-                      type="submit"
-                      className="px-3.5 py-1.5 rounded-xl bg-teal-800 text-white text-xs font-bold hover:bg-teal-900 shadow-2xs transition-all active:scale-95 shrink-0"
-                    >
-                      + Tambah
-                    </button>
-                  </div>
-                </div>
+                  {newSubtaskType === 'checkbox_note' && (
+                    <div className="pt-1 border-t border-indigo-100 space-y-1 bg-indigo-50/50 p-2 rounded-xl text-xs">
+                      <label className="text-[10px] font-bold text-indigo-950 block">
+                        Placeholder Panduan Keterangan (Ditentukan Admin):
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Contoh: Nomor Resi / Link Berkas Drive / Catatan Bukti..."
+                        value={newSubtaskNotePlaceholder}
+                        onChange={(e) => setNewSubtaskNotePlaceholder(e.target.value)}
+                        className="w-full px-2.5 py-1 bg-white border border-indigo-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-600 placeholder:text-slate-400"
+                      />
+                    </div>
+                  )}
 
-                {newSubtaskType === 'checkbox_note' && (
-                  <div className="pt-1 border-t border-indigo-100 space-y-1 bg-indigo-50/50 p-2 rounded-xl text-xs">
-                    <label className="text-[10px] font-bold text-indigo-950 block">
-                      Placeholder Panduan Keterangan (Ditentukan Admin):
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Contoh: Nomor Resi / Link Berkas Drive / Catatan Bukti..."
-                      value={newSubtaskNotePlaceholder}
-                      onChange={(e) => setNewSubtaskNotePlaceholder(e.target.value)}
-                      className="w-full px-2.5 py-1 bg-white border border-indigo-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-indigo-600 placeholder:text-slate-400"
-                    />
-                  </div>
-                )}
-
-                {newSubtaskType === 'number_input' && (
-                  <div className="flex items-center gap-2 pt-1 border-t border-slate-200/80 text-xs flex-wrap">
-                    <span className="text-[11px] font-bold text-amber-900">Target Angka:</span>
-                    <input
-                      type="number"
-                      placeholder="10"
-                      value={newSubtaskTarget}
-                      onChange={(e) => setNewSubtaskTarget(e.target.value)}
-                      className="w-16 px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
-                    />
-                    <span className="text-[11px] font-bold text-slate-600">Satuan:</span>
-                    <input
-                      type="text"
-                      placeholder="Paket / Lembar / Rp"
-                      value={newSubtaskUnit}
-                      onChange={(e) => setNewSubtaskUnit(e.target.value)}
-                      className="flex-1 min-w-[100px] px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-xs"
-                    />
-                  </div>
-                )}
-              </form>
+                  {newSubtaskType === 'number_input' && (
+                    <div className="flex items-center gap-2 pt-1 border-t border-slate-200/80 text-xs flex-wrap">
+                      <span className="text-[11px] font-bold text-amber-900">Target Angka:</span>
+                      <input
+                        type="number"
+                        placeholder="10"
+                        value={newSubtaskTarget}
+                        onChange={(e) => setNewSubtaskTarget(e.target.value)}
+                        className="w-16 px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-xs font-bold"
+                      />
+                      <span className="text-[11px] font-bold text-slate-600">Satuan:</span>
+                      <input
+                        type="text"
+                        placeholder="Paket / Lembar / Rp"
+                        value={newSubtaskUnit}
+                        onChange={(e) => setNewSubtaskUnit(e.target.value)}
+                        className="flex-1 min-w-[100px] px-2 py-0.5 bg-white border border-slate-200 rounded-lg text-xs"
+                      />
+                    </div>
+                  )}
+                </form>
+              )}
             </div>
           )}
 
@@ -480,23 +494,27 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({ task, onClose 
           {/* Delete, Edit & Complete Action Footer */}
           <div className="flex items-center justify-between pt-3 border-t border-slate-200 gap-2 flex-wrap">
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setIsEditModalOpen(true)}
-                className="text-xs text-teal-800 hover:text-teal-950 font-bold flex items-center gap-1 transition-colors px-2.5 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 border border-teal-200"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-                <span>Edit Target</span>
-              </button>
+              {isAdmin && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditModalOpen(true)}
+                    className="text-xs text-teal-800 hover:text-teal-950 font-bold flex items-center gap-1 transition-colors px-2.5 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 border border-teal-200"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                    <span>Edit Target</span>
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => setIsDeleteModalOpen(true)}
-                className="text-xs text-rose-600 hover:text-rose-800 font-bold flex items-center gap-1 transition-colors px-2 py-1 rounded-xl hover:bg-rose-50"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>Hapus</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsDeleteModalOpen(true)}
+                    className="text-xs text-rose-600 hover:text-rose-800 font-bold flex items-center gap-1 transition-colors px-2 py-1 rounded-xl hover:bg-rose-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Hapus</span>
+                  </button>
+                </>
+              )}
             </div>
 
             <button

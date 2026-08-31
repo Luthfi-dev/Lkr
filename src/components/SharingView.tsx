@@ -24,6 +24,7 @@ import { QuickPostComposer } from './QuickPostComposer';
 import { PostCard } from './PostCard';
 import { ImageLightboxModal } from './ImageLightboxModal';
 import { MobilePagination } from './MobilePagination';
+import { PostCardSkeleton } from './SkeletonLoader';
 import { isPostVisibleToUser } from '../utils/postPrivacy';
 
 interface SharingViewProps {
@@ -40,6 +41,9 @@ export const SharingView: React.FC<SharingViewProps> = ({ onOpenCreatePost }) =>
     activeCircleId,
     activeCircle,
     searchQuery,
+    isInitialLoading,
+    isRefreshingData,
+    postCategories,
   } = useApp();
 
   const [selectedCategory, setSelectedCategory] = useState<string>('Semua');
@@ -71,14 +75,12 @@ export const SharingView: React.FC<SharingViewProps> = ({ onOpenCreatePost }) =>
     }
   }, [posts]);
 
+  // Dynamic category list starting with 'Semua', followed by database categories, and ending with 'Tersimpan'
   const categories = [
     'Semua',
-    'Rangkuman Buku',
-    'Wawasan & Artikel',
-    'Materi Keilmuan',
-    'Misi Kebaikan',
+    ...postCategories.map((c) => c.name),
     'Tersimpan',
-  ];
+  ].filter((v, i, a) => a.indexOf(v) === i);
 
   // Get active circle members for mention autocompletion
   const availableMembers = activeCircle
@@ -201,8 +203,13 @@ export const SharingView: React.FC<SharingViewProps> = ({ onOpenCreatePost }) =>
         </button>
       </div>
 
-      {/* 5. Empty State */}
-      {filteredPosts.length === 0 && (
+      {/* 5. Loading Skeletons */}
+      {(isInitialLoading || (isRefreshingData && posts.length === 0)) ? (
+        <div className="space-y-4">
+          <PostCardSkeleton />
+          <PostCardSkeleton />
+        </div>
+      ) : filteredPosts.length === 0 ? (
         <div className="bg-white rounded-3xl p-8 text-center border border-slate-100 space-y-3 shadow-xs">
           <div className="w-12 h-12 rounded-full bg-teal-50 text-teal-800 flex items-center justify-center mx-auto text-xl font-bold">
             📖
@@ -222,31 +229,31 @@ export const SharingView: React.FC<SharingViewProps> = ({ onOpenCreatePost }) =>
             Tulis Postingan Sekarang
           </button>
         </div>
-      )}
+      ) : (
+        /* 6. Feed Post Cards */
+        <div className="space-y-4">
+          {filteredPosts
+            .slice((feedPage - 1) * 4, feedPage * 4)
+            .map((post) => (
+            <PostCard
+              key={post.id}
+              post={post}
+              availableMembers={availableMembers}
+              onOpenImageLightbox={handleOpenImageLightbox}
+            />
+          ))}
 
-      {/* 6. Feed Post Cards (Instagram & Facebook Social Media Experience) */}
-      <div className="space-y-4">
-        {filteredPosts
-          .slice((feedPage - 1) * 4, feedPage * 4)
-          .map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            availableMembers={availableMembers}
-            onOpenImageLightbox={handleOpenImageLightbox}
+          {/* Mobile Feed Pagination */}
+          <MobilePagination
+            currentPage={feedPage}
+            totalItems={filteredPosts.length}
+            pageSize={4}
+            onPageChange={setFeedPage}
+            itemLabel="postingan wawasan"
+            className="pt-2"
           />
-        ))}
-
-        {/* Mobile Feed Pagination */}
-        <MobilePagination
-          currentPage={feedPage}
-          totalItems={filteredPosts.length}
-          pageSize={4}
-          onPageChange={setFeedPage}
-          itemLabel="postingan wawasan"
-          className="pt-2"
-        />
-      </div>
+        </div>
+      )}
 
       {/* 7. Image Lightbox Modal */}
       {lightboxImage && (

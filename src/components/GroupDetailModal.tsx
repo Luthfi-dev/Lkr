@@ -13,9 +13,11 @@ import {
   MessageSquare,
   Share2,
   Tag,
-  KeyRound
+  KeyRound,
+  Link as LinkIcon
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { copyToClipboard } from '../utils/clipboard';
 import { Circle } from '../types';
 
 interface GroupDetailModalProps {
@@ -39,6 +41,7 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({
   } = useApp();
 
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [activeTab, setActiveTab] = useState<'info' | 'members' | 'tasks'>('info');
 
   if (!isOpen || !circle) return null;
@@ -48,9 +51,28 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({
   const myRole = circle.members.find((m) => m.id === currentUser.id)?.role || 'Anggota';
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(circle.code);
+    copyToClipboard(circle.code);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
+  };
+
+  const handleCopyLink = () => {
+    if (typeof window !== 'undefined' && circle) {
+      const link = `${window.location.origin}/#join/${circle.code}`;
+      if (navigator.share) {
+        navigator.share({
+          title: `Bergabung ke grup ${circle.name}`,
+          text: `Ayo bergabung ke grup ${circle.name} di Lingkar App! Kode: ${circle.code}`,
+          url: link,
+        }).catch(() => {
+          copyToClipboard(link);
+        });
+      } else {
+        copyToClipboard(link);
+      }
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    }
   };
 
   const handleEnterWorkspace = () => {
@@ -186,32 +208,45 @@ export const GroupDetailModal: React.FC<GroupDetailModalProps> = ({
               </div>
 
               {/* Join Code Card */}
-              <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                    Kode Undangan Tim
-                  </span>
-                  <span className="text-sm font-mono font-bold text-slate-900 tracking-wider">
-                    {circle.code}
-                  </span>
+              <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                      Kode Undangan Tim
+                    </span>
+                    <span className="text-sm font-mono font-bold text-slate-900 tracking-wider">
+                      {circle.code}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={handleCopyCode}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    {copiedCode ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-teal-700" />
+                        <span className="text-teal-700">Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Salin Kode</span>
+                      </>
+                    )}
+                  </button>
                 </div>
 
-                <button
-                  onClick={handleCopyCode}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center gap-1.5 transition-colors"
-                >
-                  {copiedCode ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-teal-700" />
-                      <span className="text-teal-700">Tersalin!</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Salin Kode</span>
-                    </>
-                  )}
-                </button>
+                <div className="border-t border-slate-100 pt-2.5 flex items-center justify-between">
+                  <span className="text-[11px] text-slate-500 font-medium">Atau bagikan link langsung:</span>
+                  <button
+                    onClick={handleCopyLink}
+                    className="px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200/80 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <LinkIcon className="w-3.5 h-3.5" />
+                    <span>{copiedLink ? 'Link Tersalin!' : 'Salin / Bagikan Link'}</span>
+                  </button>
+                </div>
               </div>
             </div>
           )}

@@ -32,6 +32,7 @@ import { DelegationModal } from './DelegationModal';
 import { SubtaskItem } from './SubtaskItem';
 import { MobilePagination } from './MobilePagination';
 import { EditTaskModal } from './EditTaskModal';
+import { TaskCardSkeleton } from './SkeletonLoader';
 
 interface TasksViewProps {
   onOpenTaskDetail: (task: Task) => void;
@@ -58,6 +59,8 @@ export const TasksView: React.FC<TasksViewProps> = ({
     isAuthenticated,
     setIsAuthModalOpen,
     setActiveTab: setGlobalActiveTab,
+    isInitialLoading,
+    isRefreshingData,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'cards' | 'calendar' | 'groupGoals' | 'missions'>('cards');
@@ -72,6 +75,22 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
   // Quick inline subtask state for cards
   const [quickSubtaskInput, setQuickSubtaskInput] = useState<{ [taskId: string]: string }>({});
+
+  // Pagination states
+  const [taskPage, setTaskPage] = useState(1);
+  const TASK_PAGE_SIZE = 5;
+
+  const [groupGoalPage, setGroupGoalPage] = useState(1);
+  const GROUP_GOAL_PAGE_SIZE = 4;
+
+  const [missionsPage, setMissionsPage] = useState(1);
+  const MISSIONS_PAGE_SIZE = 4;
+
+  React.useEffect(() => {
+    setTaskPage(1);
+    setGroupGoalPage(1);
+    setMissionsPage(1);
+  }, [filterStatus, searchQuery, activeCircleId, activeTab]);
 
   if (!isAuthenticated) {
     return (
@@ -106,22 +125,6 @@ export const TasksView: React.FC<TasksViewProps> = ({
       </div>
     );
   }
-
-  // Pagination states
-  const [taskPage, setTaskPage] = useState(1);
-  const TASK_PAGE_SIZE = 5;
-
-  const [groupGoalPage, setGroupGoalPage] = useState(1);
-  const GROUP_GOAL_PAGE_SIZE = 4;
-
-  const [missionsPage, setMissionsPage] = useState(1);
-  const MISSIONS_PAGE_SIZE = 4;
-
-  React.useEffect(() => {
-    setTaskPage(1);
-    setGroupGoalPage(1);
-    setMissionsPage(1);
-  }, [filterStatus, searchQuery, activeCircleId, activeTab]);
 
   // User's joined circles IDs for privacy enforcement
   const myJoinedCircleIds = new Set(
@@ -316,7 +319,12 @@ export const TasksView: React.FC<TasksViewProps> = ({
 
           {/* Tasks List */}
           <div className="space-y-3.5">
-            {filteredTasks.length === 0 ? (
+            {(isInitialLoading || (isRefreshingData && tasks.length === 0)) ? (
+              <div className="space-y-3.5">
+                <TaskCardSkeleton />
+                <TaskCardSkeleton />
+              </div>
+            ) : filteredTasks.length === 0 ? (
               <div className="text-center py-12 bg-white rounded-3xl border border-slate-200 p-6 space-y-2">
                 <p className="text-sm font-bold text-slate-700">Tidak ada target atau tugas pada filter ini.</p>
                 <p className="text-xs text-slate-500">Mulai buat target bersama atau checklist harian baru.</p>
@@ -423,49 +431,123 @@ export const TasksView: React.FC<TasksViewProps> = ({
                     </div>
 
                     {/* Priority, Status, Progress Indicator */}
-                    <div className="flex items-center justify-between text-xs pt-1 flex-wrap gap-2">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateTaskStatus(
-                              task.id,
-                              task.status === 'done' ? 'ongoing' : 'done'
-                            );
-                          }}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-white/60 text-[11px] font-bold text-slate-800 hover:bg-white transition-colors"
-                        >
-                          <span
-                            className={`w-2 h-2 rounded-full shrink-0 ${
-                              task.status === 'done' ? 'bg-emerald-600' : 'bg-amber-500'
-                            }`}
-                          />
-                          {task.status === 'done' ? 'Tuntas Selesai' : 'Sedang Berjalan'}
-                        </button>
+                    {(() => {
+                      const userComp = task.isDelegated ? task.userCompletions?.find(c => c.userId === currentUser.id) : null;
+                      const isUserCompleted = task.isDelegated ? (userComp?.completed || false) : task.status === 'done';
+                      const completedCount = task.isDelegated
+                        ? (userComp?.completedSubtaskIds?.length || 0)
+                        : task.subtasks.filter((s) => s.completed).length;
+                      const progressPercentage = task.isDelegated
+                        ? (task.subtasks.length > 0 ? Math.round((completedCount / task.subtasks.length) * 100) : (isUserCompleted ? 100 : 0))
+                        : task.progress;
 
-                        <span
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 shrink-0 ${
-                            task.priority === 'High'
-                              ? 'bg-rose-100 text-rose-900'
-                              : 'bg-amber-100 text-amber-900'
-                          }`}
-                        >
-                          {task.priority === 'High' ? '🔴 Prioritas Tinggi' : '🟡 Sedang'}
-                        </span>
-                      </div>
+                      const circleOfTask = circles.find(c => c.id === task.circleId);
+                      const circleMembers = circleOfTask ? circleOfTask.members : [];
 
-                      <span className="text-xs font-bold text-slate-800 shrink-0">
-                        {task.subtasks.filter((s) => s.completed).length}/{task.subtasks.length} Selesai ({task.progress}%)
-                      </span>
-                    </div>
+                      return (
+                        <>
+                          <div className="flex items-center justify-between text-xs pt-1 flex-wrap gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateTaskStatus(
+                                    task.id,
+                                    isUserCompleted ? 'ongoing' : 'done'
+                                  );
+                                }}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 border border-white/60 text-[11px] font-bold text-slate-800 hover:bg-white transition-colors"
+                              >
+                                <span
+                                  className={`w-2 h-2 rounded-full shrink-0 ${
+                                    isUserCompleted ? 'bg-emerald-600' : 'bg-amber-500'
+                                  }`}
+                                />
+                                {task.isDelegated 
+                                  ? (isUserCompleted ? 'Tuntas (Anda)' : 'Lapor Selesai (Anda)')
+                                  : (task.status === 'done' ? 'Tuntas Selesai' : 'Sedang Berjalan')
+                                }
+                              </button>
 
-                    {/* Progress Bar */}
-                    <div className="w-full h-2 bg-white/80 rounded-full overflow-hidden p-0.5">
-                      <div
-                        className={`h-full rounded-full ${barBg} transition-all duration-500`}
-                        style={{ width: `${task.progress}%` }}
-                      />
-                    </div>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-flex items-center gap-1 shrink-0 ${
+                                  task.priority === 'High'
+                                    ? 'bg-rose-100 text-rose-900'
+                                    : 'bg-amber-100 text-amber-900'
+                                }`}
+                              >
+                                {task.priority === 'High' ? '🔴 Prioritas Tinggi' : '🟡 Sedang'}
+                              </span>
+
+                              {task.isDelegated && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-900">
+                                  👥 Tugas Per Anggota
+                                </span>
+                              )}
+                            </div>
+
+                            <span className="text-xs font-bold text-slate-800 shrink-0">
+                              {task.isDelegated
+                                ? `${completedCount}/${task.subtasks.length} Selesai (Progres Anda)`
+                                : `${completedCount}/${task.subtasks.length} Selesai (${progressPercentage}%)`
+                              }
+                            </span>
+                          </div>
+
+                          {/* Progress Bar */}
+                          <div className="w-full h-2 bg-white/80 rounded-full overflow-hidden p-0.5">
+                            <div
+                              className={`h-full rounded-full ${barBg} transition-all duration-500`}
+                              style={{ width: `${progressPercentage}%` }}
+                            />
+                          </div>
+
+                          {/* Group Members Progress Section for Delegated Tasks */}
+                          {task.isDelegated && circleMembers.length > 0 && (
+                            <div className="mt-2.5 pt-2 border-t border-slate-200/50 bg-slate-100/50 rounded-2xl p-2.5 space-y-1.5" onClick={e => e.stopPropagation()}>
+                              <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between">
+                                <span>Laporan Progres Anggota</span>
+                                <span className="text-teal-850 font-extrabold font-mono">
+                                  {task.userCompletions?.filter(c => c.completed).length || 0}/{circleMembers.length} Tuntas
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-36 overflow-y-auto pr-0.5">
+                                {circleMembers.map(member => {
+                                  const comp = task.userCompletions?.find(c => c.userId === member.id);
+                                  const hasCompleted = comp?.completed || false;
+                                  const subCount = comp?.completedSubtaskIds?.length || 0;
+                                  return (
+                                    <div key={member.id} className="flex items-center justify-between gap-1.5 p-1 px-1.5 bg-white/80 rounded-xl border border-slate-200/40 text-[11px]">
+                                      <div className="flex items-center gap-1.5 min-w-0">
+                                        <img
+                                          src={member.avatar}
+                                          alt={member.name}
+                                          referrerPolicy="no-referrer"
+                                          className="w-4.5 h-4.5 rounded-full object-cover shrink-0 ring-1 ring-slate-100"
+                                        />
+                                        <span className="font-semibold text-slate-800 truncate">
+                                          {member.name.split(' ')[0]} {member.id === currentUser.id ? '(Anda)' : ''}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        {task.subtasks.length > 0 && (
+                                          <span className="text-[10px] text-slate-400 font-bold font-mono">
+                                            {subCount}/{task.subtasks.length}
+                                          </span>
+                                        )}
+                                        <span className={`px-1.5 py-0.2 rounded-md text-[9px] font-bold ${hasCompleted ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                                          {hasCompleted ? 'Tuntas' : 'Belum'}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
 
                     {/* Subtasks Collaborative Checklist */}
                     {task.subtasks.length > 0 && (
